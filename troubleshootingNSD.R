@@ -5,8 +5,10 @@
    #### If you get errors from findrloc() ####
       
 
-      ## Identify individuals for whom rloc won't work
-      
+      ## Run the below to identify individuals for whom rloc didn't work
+      ## Errors often reveal issues with earliest recorded locations
+      ## (e.g., several missing locations soon after the starting location)
+
       
         # create dataframe to store error messages in
         errorsRloc <- data.frame(elkYr = unique(locsModel$elkYr), Err = NA)
@@ -31,7 +33,7 @@
         # individuals and the errors they had
         errorsRloc <- errorsRloc[!is.na(errorsRloc$Err),]
         View(errorsRloc)
-        
+        beep("complete")
       
         
       ## Fix the problem for those individuals

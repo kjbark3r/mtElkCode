@@ -2,8 +2,8 @@
 #  CLASSIFYING MIGRATORY BEHAVIOR OF INDIVIDUALS  #
 #         USING NET SQUARED DISPLACEMENT          #
 #                                                 #
-#         Kristin Barker - Summer 2018            #
-#            kristinjbarker@gmail.com             #
+#         Kristin Barker | Summer 2018            #
+#           kristinjbarker@gmail.com              #
 ### ### ### ### ### ### ### ### ### ### ### ### ###
 
 
@@ -22,6 +22,7 @@
       "RODBC",       ## connect to Access database
       "migrateR",    ## migratory behavior analysis
       "sp",          ## spatial work, eg setting projections
+      "tibble",
       "dplyr")       ## data manipulation and general awesomeness
 
 
@@ -78,7 +79,7 @@
     
       # replace the file path after "dbq=" with yours (sorry, i failed to do it programmatically)
       channel <- odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb, *.accdb)};
-        dbq = C:/Users/kristin/Documents/MontanaElkCode/mtElkCode/Statewide_Elk_GPS_copy.accdb")
+        dbq=C:/Users/kristin/Documents/MontanaElkCode/mtElkCode/Statewide_Elk_GPS.accdb")
   
      
       # pull GPS collar locations from database (this takes forEVer)
@@ -99,20 +100,29 @@
         mutate(
           # remove messed-up date from Time 
           Time = strftime(Time, format = "%H:%M:%S"),
-          # combine date and time in POSIXct format
-          DT = as.POSIXct(paste(Date, Time, sep = " "), format = "%Y-%m-%d %H:%M:%S"),
           # format Date as date
           Date = as.Date(Date),          
           # identify year and month of each location
           yearLoc = substr(Date, 0, 4),
           monthLoc = substr(Date, 6, 7),
           # identify elk-year
-          elkYr = paste(AnimalID, yearLoc, sep = "-")
+          elkYr = paste(AnimalID, yearLoc, sep = "-"),
+          # combine date and time in POSIXct format
+          DT = as.POSIXct(paste(Date, Time, sep = " "), format = "%Y-%m-%d %H:%M:%S")
         ) 
 
+      
+      
+      # fix NAs created by locs recorded during daylight savings time
+      locsFormat$DT <- ifelse(!is.na(locsFormat$DT), locsFormat$DT,
+        as.POSIXct(paste(locsFormat$Date,
+          strftime((as.POSIXct(locsFormat$Time, format = "%H:%M:%S") - 1*60*60), format = "%H:%M:%S"),
+          sep = " "), format = "%Y-%m-%d %H:%M:%S"))
+      locsFormat$DT = as.POSIXct(locsFormat$DT, origin = '1970-01-01')
 
       
-      # identify individuals and locations to be used in analysis
+
+      # subset individuals and locations to be used in analysis
       locsModel <- locsFormat %>%
         # remove NA locations
         filter(!is.na(Latitude)) %>%        
@@ -120,9 +130,11 @@
         group_by(elkYr) %>%
         filter(length(unique(monthLoc)) > 8) %>%
         ungroup() %>%
-        # identify time of day (day is between 8am and 8pm, inclusive)
-        mutate(timeOfDay = ifelse(substr(Time, 1, 2) >= 8 & substr(Time, 1, 2) <= 20, "Day", "Night")) %>%
-        # randomly select one loc per time of day (so, 2 locs per 24-hour period) per indiv
+        # classify times as night or day (day is between 8am and 8pm, inclusive)
+        mutate(
+          Hour = as.numeric(substr(Time, 1, 2)),
+          timeOfDay = ifelse(Hour >= 8 & Hour <= 20, "Day", "Night")) %>%
+        # randomly select 1 day and 1 night loc per date (so, 2 locs per 24-hour period) per indiv
         group_by(elkYr, Date, timeOfDay) %>%
         sample_n(1) %>%
         ungroup() %>%
@@ -146,6 +158,17 @@
         data.frame("utmX" = locsModel$Longitude, "utmY" = locsModel$Latitude), 
         locsModel, proj4string = latlong), utm))    
       
+      
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    #### ~~~~ KRISTIN DELETE THIS WHEN DB GETS FINALIZED ~~~~ ####
+            # it's the elk with the screwy locations #
+      
+      locsModel <- filter(locsModel, elkYr != "BROOT0015-2011")
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #       
+      
+      
+      
+      
    
       # identify unique herds and indivs 
       elkYrHerd <- locsModel %>%
@@ -155,6 +178,9 @@
       # KRISTIN remove these if unimportant
       elkYrs <- unique(dplyr::select(locsModel, elkYr)) 
       herds <- unique(dplyr::select(locsModel, Herd))   
+      
+      
+
 
   
       
@@ -164,8 +190,9 @@
         xy = locsModel[,c("utmX", "utmY")], 
         date = locsModel$DT,
         id = locsModel$elkYr
-        )    
-      
+        )  
+
+
             
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
@@ -184,7 +211,7 @@
   
     
       
-     #### Find indivs whose models produce an error due to rloc; give them new rloc
+     #### Make sure no indivs will throw errors due to rloc (a common issue)
     
        # redefine kappa parameter to help avoid issues
         uk64 <- pEst(u.k = log(64))
@@ -199,7 +226,7 @@
           ilocs <- droplevels(semi_join(locsModel, rlocs[i,], by = c("elkYr" = "burst")))
           
           # make it ltraj
-          ilt <- as.ltraj(xy = ilocs[,c("utmX", "utmY")], date = ilocs$DT, id = ilocs$AnimalID)
+          ilt <- as.ltraj(xy = ilocs[,c("utmX", "utmY")], date = ilocs$DT, id = ilocs$elkYr)
           
           # try the model and store error message if any
           # (note: warning messages are generally ok here)
@@ -212,22 +239,15 @@
         # individuals and the errors they had
         errors <- errors[!is.na(errors$Err),]
         View(errors)
+        
+        # If no errors, consider yourself lucky and move on to the next section.
+        # If errors, run KRISTIN INSERT EITHER PACKAGE OR FILE NAME HERE to assess.
+        # Sometimes you can just rerun above code from "locsModel <- ..." to fix,  
+        # if issues are just due to the locations that happened to be randomly selected.
+
                 
 
-#### ----KRISTIN YOU LEFT OFF HERE  ####
-        
-        ##, you have 3 errors. Next step is trying new rlocs to address.##
-        
-        
-        # if any indivs had errors, run separate code to address
-        if (any(!is.na(errors$Err))) {
-          devtools::install_github("kjbark3r/rLocFix")
-          rLocFix::changerLoc(data, whatever)
-        }
-        
 
-        
-        
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
     
     
@@ -248,14 +268,14 @@
         
         
         # rNSD with expanded duration parameter and updated rloc 
-        mBase <- mvmtClass(lt, rloc = rlocs$newrloc, p.est = timing) 
+        mBase <- mvmtClass(lt, rloc = rlocs$rloc, p.est = timing) 
         
         # print number of convergence issues
-        length(which(!fullmvmt(mBase))) 
+        length(which(!fullmvmt(mBase))) # 65 (2018-07-03)
     
     
       
-    #### Refine base model to address convergence issues ####
+    #### Refine base model to address as many convergence issues as possible ####
         
           
         # allow up to 8km daily displacement within the same resident range
@@ -265,20 +285,20 @@
         mref1 <- refine(mBase, p.est = uk64)
         
         # print number of convergence issues
-        length(which(!fullmvmt(mref1))) 
+        length(which(!fullmvmt(mref1))) # 30 (2018-07-03)
 
 
       
     #### Identify top model for each individual ####
       
-        # don't consider mixmig or nomad (see thesis ch2 appx s1 for more info)
+        # don't consider mixmig or nomad (see thesis ch2 appendix s1 for more info)
         mTop <- topmvmt(mref1, omit = c("mixmig", "nomad"))
         
         # identify prelimiary top model per indiv
-        topMods <- data.frame(AnimalID = modIndivs, PrelimClassn = names(mTop))
+        topMods <- data.frame(elkYr = elkYrs, PrelimClassn = names(mTop))
         
         # store
-        write.csv(topMods, file = "./rNSDresults/initialclassns.csv", row.names=F)
+        write.csv(topMods, file = "prelimBehavClassns.csv", row.names=F)
           
         # take quick look at prelim classns 
         summary(topMods$PrelimClassn)
@@ -297,7 +317,7 @@
       
       #### Define number of plots to create ####
           
-        numPlots <- nrow(modIndivs)
+        numPlots <- nrow(elkYrs)
         myPlots <- vector(numPlots, mode='list')
       
       
@@ -314,7 +334,7 @@
       
       #### Create and store one pdf file of all plots ####
         
-        pdf(here(outputFolder, 'NSDplots.pdf'), onefile = TRUE)
+        pdf('NSDplots.pdf', onefile = TRUE)
         for(my.plot in myPlots) {
           replayPlot(my.plot)
         }
@@ -342,14 +362,15 @@
     
         
           # Create blank dataframe to store parameters of top models in
-          params <- data.frame(AnimalID = as.character(), 
+          params <- data.frame(elkYr = as.character(), 
                              Model = as.character(),
                              delta = as.numeric(),
                              phi = as.numeric(),
                              theta = as.numeric(),
                              rho = as.numeric(),
                              phi2 = as.numeric(),
-                             kappa = as.numeric())
+                             kappa = as.numeric(),
+                             gamma = as.numeric())
           
           
           # extract and store parameters of top models
@@ -357,7 +378,7 @@
             # extract data for each model
             dat <- paramlist[[i]]
             # map parameters to correct individuals
-            dat$AnimalID <- row.names(dat)
+            dat$elkYr <- row.names(dat)
             # identify model 
             dat$Model <- paste(names(paramlist)[i])
             # store all info
@@ -371,12 +392,13 @@
           
           reclass <- params %>%
             # if "resident" moved >900km2, reclassify as Migrant (these are actually mixed migrants)
-            mutate(Reclass = ifelse(Model == "resident" & delta > 900, "migrant", Model)) %>%
+            mutate(Reclass = ifelse(Model == "resident" & gamma > 900, "migrant", Model)) %>%
             # if animal "dispersed" or "migrated" <6.7 km, reclassify as Resident
-            mutate(Reclass = ifelse(Reclass == "disperser" &  delta < 45 | Reclass == "migrant" &  delta < 45, "resident", Reclass)) %>%
+            mutate(Reclass = ifelse(
+              Reclass == "disperser" &  delta < 45 | Reclass == "migrant" &  !is.na(delta) & delta < 45, "resident", Reclass)) %>%
             # if animal "migrated" < 8.7km or "resided" within > 6.7km, reclassify as Other
-            mutate(Reclass = ifelse(Reclass == "migrant" & delta < 75, "other", Reclass)) %>%
-            mutate(Reclass = ifelse(Reclass == "resident" & delta > 45, "other", Reclass)) %>%  
+            mutate(Reclass = ifelse(Reclass == "migrant" & !is.na(delta) & delta < 75, "other", Reclass)) %>%
+            mutate(Reclass = ifelse(Reclass == "resident" & !is.na(gamma) & gamma > 45, "other", Reclass)) %>%  
             # rename dispersers as Other
             mutate(Reclass = ifelse(Reclass == "disperser", "other", Reclass)) %>%
             # if animal "dispersed" or "migrated" after summer, reclassify as Other
@@ -390,55 +412,220 @@
           
     
     
-### ### ### ### ### ### ##
-####    |SUMMARIES|   ####
-### ### ### ### ### ### ##
+### ### ### ### ### ### ### ### ###
+####    |BEHAVIOR SUMMARIES|   ####
+### ### ### ### ### ### ### ### ###
 	  
          
-        ## add herd info, rename columns to avoid future confusion, and store ##
+
+        #### Final behavioral classifications, including Herd info ####
           
+        behav <- reclass %>%
+          left_join(elkYrHerd, by = "elkYr") %>%
+          rename(Behav = Reclass, ParamMod = Model) %>%
+          dplyr::select(c(elkYr, Herd, Behav, delta, phi, theta, rho, phi2, kappa, ParamMod)) %>%
+          arrange(elkYr)
+        write.csv(behav, "behavParamsPerIndiv.csv", row.names = F)
+        
+        
+        
+        #### Herd-level summaries - Ppns of behavs; mean parameters ####
+        
+        herdBehav <- behav %>%
+    	    group_by(Herd) %>%
+    	    summarise(nIndivs = n(),
+    	              nMig = length(which(Behav == "migrant")),
+    	              nRes = length(which(Behav == "resident")),
+    	              nOth = length(which(Behav == "other"))) %>%
+    	    mutate(ppnMig = round(nMig/nIndivs, digits = 2),
+    	           ppnRes = round(nRes/nIndivs, digits =2),
+    	           ppnOth = round(nOth/nIndivs, digits = 2)) %>%
+    	    dplyr::select(Herd, ppnMig, ppnRes, ppnOth, nIndivs)
+        write.csv(herdBehav, "behavPerHerd.csv", row.names=F)
+        
+        
+        
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
+  
           
-          # herd per indiv
-          indivsHerds <- modLocs %>%
-            dplyr::select(AnimalID, Herd) %>%
-            distinct() 
+    
+    
+### ### ### ### ### ### ### ### ###
+####    |SEASONAL SUMMARIES|   ####
+### ### ### ### ### ### ### ### ###
+	  
+
+        
+        
+    #### Determine spring and fall movement dates for migrants  ####
+        
+        
+        # Identify mixed migrants (need to handle specially)
+        indivsMix <- reclass %>%
+          filter(Reclass == "migrant" & gamma > 900) %>%
+          dplyr::select(elkYr)
+        indexMix <- which(elkYrs$elkYr %in% indivsMix$elkYr)
+        
+        
+        # Identify migrants
+        indivsMig <- reclass %>%
+          filter(Reclass == "migrant") %>%
+          # but not mixed migrants bc they don't always have a migrant model
+          anti_join(indivsMix, by = "elkYr") %>%
+          dplyr::select(elkYr)  
+        indexMig <- which(elkYrs$elkYr %in% indivsMig$elkYr)
+
+        
+        # extract movement dates from migrant models
+        datesModelA <- list()
+        for (i in 1:length(indexMig)) {
+          datesModelA[i] <- mvmt2dt(mref1[[indexMig[i]]])
+          names(datesModelA)[[i]] <- elkYrs[indexMig[i], "elkYr"]
+        }
+        
+        # extract movement dates from mixed-migrant models
+        datesModelB <- list()
+        for (i in 1:length(indexMix)) {
+          datesModelB[i] <- mvmt2dt(mref1[[indexMix[i]]], mod = "mixmig")
+          names(datesModelB)[[i]] <- elkYrs[indexMix[i], "elkYr"]
+        }
+        
+        # combine dates to incl migrants and mixed-migrants
+        datesModels <- c(datesModelA, datesModelB)
+        
+        
+        
+        # Create dataframe to store properly formatted date data
+        datesMig <- as.data.frame(matrix(ncol = 5, nrow = 0))
+        colnames(datesMig) <- c("elkYr", "end1", "end2", "str1", "str2")
+        
+        
+        # Format & store movement dates for all migrants & mixed migrants
+        for (i in 1:length(datesModels)) {
           
+          # For each individual
+          dat <- datesModels[[i]]
           
-          # add herd info to classification info
-          behav <- reclass %>%
-            left_join(indivsHerds, by = "AnimalID") %>%
-            rename(Behav = Reclass, ParamMod = Model) %>%
-            dplyr::select(c(AnimalID, Herd, Behav, delta, phi, theta, rho, phi2, kappa, ParamMod)) %>%
-            arrange(AnimalID)
-          write.csv(behav, "mig-behav.csv", row.names = F)
+          # Add column of parameter names
+          dat$param <- rownames(dat)
           
+          # Add column of individual identifier
+          dat$elkYr <- names(datesModels[i])
           
-          # summarize behaviors by herd
-          # without including the 2 indivs we can't estimate winterHR for
-          popbehav <- behav %>%
-            filter(AnimalID != "BROOT130031" & AnimalID != "BROOT130079") %>%
-      	    group_by(Herd) %>%
-      	    summarise(nIndivs = n(),
-      	              nMig = length(which(Behav == "migrant")),
-      	              nRes = length(which(Behav == "resident")),
-      	              nOth = length(which(Behav == "other"))) %>%
-      	    mutate(ppnMig = round(nMig/nIndivs, digits = 2),
-      	           ppnRes = round(nRes/nIndivs, digits =2),
-      	           ppnOth = round(nOth/nIndivs, digits = 2)) %>%
-      	    dplyr::select(Herd, ppnMig, ppnRes, ppnOth, nIndivs)
-          write.csv(popbehav, "behav-per-popn.csv", row.names=F)
+          # Remove extraneous column that messes things up
+          dat <- dplyr::select(dat, -dday)
           
+          # Format data appropriately to combine with other indivs
+          dat <- spread(dat, key = "param", value = "date")
+
+          # And combine
+          datesMig <- bind_rows(datesMig, dat)
           
+        }
+           
+        
+        # Calculate movement durations, seasonal dates, and distance moved
+        datesIndiv <- datesMig %>%
+          # pull spring and fall migration dates from the above
+          mutate(
+            sprSt = as.Date(str1),
+            sprEn = as.Date(end1),
+            fallSt = as.Date(str2),
+            fallEn = as.Date(end2),
+            smrSt = sprEn+1,
+            smrEn = fallSt-1) %>%
+          # calculate duration of spring and fall migration
+          mutate(
+            sprDr = as.numeric(round(sprEn - sprSt)),
+            fallDr = as.numeric(round(fallEn - fallSt))) %>%
+          # remove extraneous columns
+          dplyr::select(-c("str1", "end1", "str2", "end2")) %>%
+          # pull in model parameters for summer range distance and duration
+          left_join(dplyr::select(params, elkYr, delta, rho), by = "elkYr") %>%
+          rename(dist = delta, smrDr = rho) %>%
+          mutate(dist = as.numeric(round(dist, 2)), smrDr = as.numeric(round(smrDr))) %>%
+          # add herd and herd-year to facilitate later herd summaries etc
+          left_join(elkYrHerd, by = "elkYr") %>%
+          mutate(
+            yr = substr(elkYr, nchar(elkYr)-3, nchar(elkYr)),
+            herdYr = paste(Herd, yr, sep = "-"))
+
+        
+        # Summarize the above per herd        
+        datesHerd <- datesIndiv %>%
+          group_by(herdYr) %>%
+          summarise(
+            nMig = n(),
+            sprStartMean = mean(sprSt),
+            sprStartSd = as.numeric(sd(sprSt)),
+            sprEndMean = mean(sprEn),
+            sprEndSd = as.numeric(sd(sprEn)),
+            sprDurMean = mean(sprDr),
+            sprDurSd = sd(sprDr),
+            fallStartMean = mean(fallSt),
+            fallStartSd = as.numeric(sd(fallSt)),
+            fallEndMean = mean(fallEn),
+            fallEndSd = as.numeric(sd(fallEn)),
+            fallDurMean = mean(fallDr),
+            fallDurSd = sd(fallDr),
+            smrDurMean = mean(smrDr),
+            smrDurSd = sd(smrDr),
+            distMean = mean(dist),
+            distSd = sd(dist))
+        
+        
+        # Add all date and duration info to full indiv list
+        allDatIndiv <- reclass %>%
+          rename(behav = Reclass) %>%
+          left_join(elkYrHerd, by = "elkYr") %>%
+          mutate(herdYr = paste(Herd, substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sep = "-")) %>%
+          left_join(datesHerd, by = "herdYr") %>%
+          left_join(datesIndiv, by = "elkYr") %>%
+          dplyr::select(-c(Herd.y, herdYr.y)) %>%
+          rename(Herd = Herd.x, herdYr = herdYr.x) %>%
+          # set dates per indiv based on either their migration or on average herd date
+          mutate(
+            sprStart = as.Date(ifelse(behav == "migrant", sprSt, sprStartMean), origin = '1970-01-01'),
+            sprEnd = as.Date(ifelse(behav == "migrant", sprEn, sprEndMean), origin = '1970-01-01'),
+            sprDur = ifelse(behav == "migrant", sprDr, sprDurMean),
+            fallStart = as.Date(ifelse(behav == "migrant", fallSt, fallStartMean), origin = '1970-01-01'),
+            fallEnd = as.Date(ifelse(behav == "migrant", fallEn, fallEndMean), origin = '1970-01-01'),
+            fallDur = ifelse(behav == "migrant", fallDr, fallDurMean),
+            smrDur = ifelse(behav == "migrant", smrDr, smrDurMean),
+            dist = ifelse(behav == "migrant", dist, NA)) %>%   
+          dplyr::select(elkYr, Herd, herdYr, behav, 
+            sprStart, sprEnd, sprDur, fallStart, fallEnd, fallDur, smrDur, dist) 
+            
+        
+        
+        # Define winter for each individual
+        winIndiv <- locsModel %>%
+          # start winter at first recorded location
+          group_by(elkYr) %>%
+          summarise(winStart = first(DT)) %>%
+          droplevels() %>%
+          # end winter day before spring migration started          
+          left_join(allDatIndiv, by = "elkYr") %>%
+          mutate(winEnd = (sprStart - 1))
+          
+
+        
+        
+        
+        
+        
+## ## ## ## ## ~ OLDER CODE ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+                  
           # use migration dates to define winter
-          indivdate <- modLocs %>%
-            distinct(AnimalID, Day1) %>%
-            left_join(reclass, by = "AnimalID") %>%
+          indivDate <- locsModel %>%
+            distinct(elkYr, Day1) %>%
+            left_join(reclass, by = "elkYr") %>%
             filter(Reclass == "migrant") %>%
-            left_join(rlocs, by = c("AnimalID" = "burst")) %>%
+            left_join(rlocs, by = c("elkYr" = "burst")) %>%
             mutate(stdt =  Day1+newrloc) %>%
             mutate(migDate = stdt+theta) %>%
             mutate(MigDay = substr(migDate, 6, 10)) %>%
-            dplyr::select(AnimalID, stdt, migDate, MigDay) %>%
+            dplyr::select(elkYr, stdt, migDate, MigDay) %>%
             mutate(nDay = migDate-stdt) %>%
             left_join(indivsHerds) %>%
             filter(!is.na(migDate))
