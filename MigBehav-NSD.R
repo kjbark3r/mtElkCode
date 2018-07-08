@@ -23,6 +23,7 @@
       "migrateR",    ## migratory behavior analysis
       "sp",          ## spatial work, eg setting projections
       "tibble",
+      "tidyr",
       "dplyr")       ## data manipulation and general awesomeness
 
 
