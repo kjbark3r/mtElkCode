@@ -1650,5 +1650,533 @@
         # i think using rho makes sense and will alleviate abt half the issues
         # still need to figure out those other ones though
       
+        
+        
+        
+  ####  double-checking herd dates make sense before assigning locs to seasons ####
+        
+        z <- datesHerd %>%
+          dplyr::select(
+            herdYr, nMig, sprStartMean, sprEndMean, sprDurMean, 
+            fallStartMean, fallEndMean, fallDurMean, smrDurMean) %>%
+          mutate(
+            herd = substr(herdYr, 1, nchar(herdYr)-5),
+            sprStartMean = as.POSIXlt(sprStartMean)$yday,
+            sprEndMean = as.POSIXlt(sprEndMean)$yday,
+            fallStartMean = as.POSIXlt(fallStartMean)$yday,
+            fallEndMean = as.POSIXlt(fallEndMean)$yday) %>%
+          # fix fall return dates in january
+          # otherwise averaging dates could make fall migration end before it starts
+          mutate(fallEndMean = ifelse(fallEndMean < 20, fallEndMean + 365, fallEndMean)) %>%
+          group_by(herd) %>%
+          summarise(
+            nElk = sum(nMig),
+            nYrs = n(),
+            sprStrt = mean(sprStartMean),
+            sprEnd = mean(sprEndMean),
+            fallStrt = mean(fallStartMean),
+            fallEnd = mean(fallEndMean),
+            sprDur = round(mean(sprDurMean)),
+            fallDur = round(mean(fallDurMean)),
+            smrDur = round(mean(smrDurMean)),
+            winDur = I(365-sprDur-fallDur-smrDur)) %>%
+          mutate(
+            sprStrt = format(strptime(sprStrt, format = "%j"), format = "%m-%d"),
+            sprEnd = format(strptime(sprEnd, format = "%j"), format = "%m-%d"),
+            fallStrt = format(strptime(fallStrt, format = "%j"), format = "%m-%d"),
+            fallEnd = format(strptime(fallEnd, format = "%j"), format = "%m-%d"))            
+        
+        
+        str(z)
+        test <- z$sprStartMean
+        test2 <- format(strptime(test, format = "%j"), format = "%m-%d")
+        test2 # cool
+        ?strptime
+        
+        ## to make these averages correct
+        ## you need to make herd averages when there's only one indiv
+        ## be == that indiv's dates, not NA.
+        ## OH you shouldn't have NAs. there's just one from the mixed migrant
+        ## need to extract duration and distance from mig model for that one
+        
+        mref1$"SC11074-2012"
+        str(mref1$"SC11074-2012")
+        mref1$"SC10074-2012"$mixmig #n
+        mref1$"SC10074-2012"@models$mixmig #n
+        mref1$"SC10074-2012"@models #n
+        mref1$"SC10074-2012"@"models"
+        mref1$"SC10074-2012"[[2]]
+        
+        # get out of the console and get your shit together kristin
+        
+        ## need to extract parameters from mixmig model for the mixmig
+        
+        
+        
+        
+        
+  #### STILL date-time issues... ####
+        
+      
+      ## oh lord, just realized something's still wrong with the random selection code
+      ## it's only using nighttime locations
+      ## i thought you fixed this already...
+      
+      # ok. challenge is that times are being read in from access as dates
+      # i thought that wasn't happening before, so maybe you effed up the time column 
+      # when you "fixed" those missing locations?
+      # alright, so step1 is just read in an older version from before you messed with it
+        
+    
+      # replace the file path after "dbq=" with yours (sorry, i failed to do it programmatically)
+      channel <- odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb, *.accdb)};
+        dbq=C:/Users/kristin/Documents/DatabasesEtc/Statewide/Elk/Statewide_Elk_GPS_MissingBROOTtimes.accdb")
+      test <- sqlQuery(channel, paste("select * from ElkGPS"))
+      odbcCloseAll()        
+      
+      # mmmyep i screwed it up. lovely.
+      # all good though just need to reformat that column properly.
+      
+      # ok wtf, it's still formatted as data type Date/Time and format Short Time (just like the older version)
+          
+      # opened and just re-clicked the same formatting options in the column, doubt it worked but check
+      channel <- odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb, *.accdb)};
+        dbq=C:/Users/kristin/Documents/MontanaElkCode/mtElkCode/Statewide_Elk_GPS.accdb")
+      test2 <- sqlQuery(channel, paste("select * from ElkGPS"))      
+      odbcCloseAll()                 
+      # yeah no.
+      
+      # step 2: try re-importing and formatting the time column as such
+      # oh oh use that xls kelly sent you and see how they had time formatted there too
+      # they had time as general; imade mine that way by pasting using "formulas and number formatting"
       
       
+      channel <- odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb, *.accdb)};
+        dbq=C:/Users/kristin/Documents/MontanaElkCode/mtElkCode/Statewide_Elk_GPS_plzwork.accdb")
+      test2 <- sqlQuery(channel, paste("select * from ElkGPS"))
+      odbcCloseAll()      
+      # motherfucker
+      # close out and retry; something's screwy (can't open or delete that db, for one)
+      
+      
+      channel <- odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb, *.accdb)};
+        dbq=C:/Users/kristin/Documents/MontanaElkCode/mtElkCode/Statewide_Elk_GPS_plzwork.accdb")
+      test <- sqlQuery(channel, paste("select * from ElkGPS"))
+      beepr::beep()
+      odbcCloseAll()      
+      # motherfucker      
+      
+      # realized i actually screwed it up in the step before,
+      # when i had to replace those missing times. 
+      # started over from that step, just imported those times
+      
+      channel <- odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb, *.accdb)};
+        dbq=C:/Users/kristin/Documents/MontanaElkCode/mtElkCode/Statewide_Elk_GPS_copy.accdb")
+      test <- sqlQuery(channel, paste("select * from ElkGPS"))
+      beepr::beep()
+      odbcCloseAll() 
+      # ok wtf. worked after adding the BROOT1131 times but not after adding the BROOT0015 times
+      #             
+      
+      # went back through and redid the excel formatting and import into access for both elk
+      # i think the times weren't actually formatted as general before.
+      
+      channel <- odbcDriverConnect("Driver={Microsoft Access Driver (*.mdb, *.accdb)};
+        dbq=C:/Users/kristin/Documents/MontanaElkCode/mtElkCode/Statewide_Elk_GPS_ihatethis.accdb")
+      test <- sqlQuery(channel, paste("select * from ElkGPS"))
+      beepr::beep()
+      odbcCloseAll() 
+      #        
+      
+      
+    #### back to dates and seasons and such ####
+      
+      
+  ## this code did work but it turns out you can't use the mixed migrant mvmt dates bc they make no sense
+      
+    #### Determine spring and fall movement dates for migrants  ###
+        
+        
+        # Identify mixed migrants (need to handle specially)
+        indivsMix <- reclass %>%
+          filter(Reclass == "migrant" & gamma > 900) %>%
+          dplyr::select(elkYr)
+        indexMix <- which(elkYrs$elkYr %in% indivsMix$elkYr)
+        
+        
+        # Identify migrants
+        indivsMig <- reclass %>%
+          filter(Reclass == "migrant") %>%
+          # but not mixed migrants bc they don't always have a migrant model
+          anti_join(indivsMix, by = "elkYr") %>%
+          dplyr::select(elkYr)  
+        indexMig <- which(elkYrs$elkYr %in% indivsMig$elkYr)
+
+        
+        # extract movement dates from migrant models
+        datesModelA <- list()
+        for (i in 1:length(indexMig)) {
+          datesModelA[i] <- mvmt2dt(mref1[[indexMig[i]]])
+          names(datesModelA)[[i]] <- elkYrs[indexMig[i], "elkYr"]
+        }
+        
+        # extract movement dates from mixed-migrant models
+        datesModelB <- list()
+        for (i in 1:length(indexMix)) {
+          datesModelB[i] <- mvmt2dt(mref1[[indexMix[i]]], mod = "mixmig")
+          names(datesModelB)[[i]] <- elkYrs[indexMix[i], "elkYr"]
+        }
+        
+        # combine dates to incl migrants and mixed-migrants
+        datesModels <- c(datesModelA, datesModelB)
+        
+        
+        
+        # Create dataframe to store properly formatted date data
+        datesMig <- as.data.frame(matrix(ncol = 5, nrow = 0))
+        colnames(datesMig) <- c("elkYr", "end1", "end2", "str1", "str2")
+        
+        
+        # Format & store movement dates for all migrants & mixed migrants
+        for (i in 1:length(datesModels)) {
+          
+          # For each individual
+          dat <- datesModels[[i]]
+          
+          # Add column of parameter names
+          dat$param <- rownames(dat)
+          
+          # Add column of individual identifier
+          dat$elkYr <- names(datesModels[i])
+          
+          # Remove extraneous column that messes things up
+          dat <- dplyr::select(dat, -dday)
+          
+          # Format data appropriately to combine with other indivs
+          dat <- spread(dat, key = "param", value = "date")
+
+          # And combine
+          datesMig <- bind_rows(datesMig, dat)
+          
+        }      
+        
+        
+    #### preserving old code in case you eff it up and need to start over [um kristin this is what git is for] ####
+
+
+        
+        # Summarize the above per herd        
+        datesHerdYr <- datesMigrants %>%
+          group_by(herdYr) %>%
+          summarise(
+            nMig = n(),
+            sprStartMean = mean(sprSt),
+            sprStartSd = round(as.numeric(sd(sprSt))),
+            sprEndMean = mean(sprEn),
+            sprEndSd = round(as.numeric(sd(sprEn))),
+            sprDurMean = round(mean(sprDr)),
+            sprDurSd = round(sd(sprDr)),
+            fallStartMean = mean(fallSt),
+            fallStartSd = round(as.numeric(sd(fallSt))),
+            fallEndMean = mean(fallEn),
+            fallEndSd = round(as.numeric(sd(fallEn))),
+            fallDurMean = round(mean(fallDr)),
+            fallDurSd = round(sd(fallDr)),
+            smrDurMean = round(mean(smrDr)),
+            smrDurSd = round(sd(smrDr)),
+            distMean = round(mean(dist), 2),
+            distSd = round(sd(dist), 2))        
+        
+        
+        
+    #### Making herd-averaged dates be in the right year ####
+        
+        
+      z <- allDatIndiv[1:3,c("elkYr", "sprStartMean")]  %>%
+          mutate(test = paste(sprStartMean, substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sep = "-"))
+      str(z)
+      z$test2 <- as.Date(z$test) #n
+      z$test2 <- as.Date(z$test, format = "%m-%d-%Y")
+      str(z) # ..k not sure why i couldn't do that yesterday...
+      
+      # was it an in-pipe issue?
+      z <- allDatIndiv[1:3,c("elkYr", "sprStartMean")]  %>%
+          mutate(test = as.Date(paste(sprStartMean, substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sep = "-")), format = "%m-%d-%Y")      
+      # oh. yes it was. can't wrap it in as.Date for some reason, but can still do in pipe?
+      
+      z <- allDatIndiv[1:3,c("elkYr", "sprStartMean")]  %>%
+          mutate(test = paste(sprStartMean, substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sep = "-"),
+            test2 = as.Date(test, format = "%m-%d-%Y"))
+      str(z) #y
+      
+      # re-mutate same column twice?
+      z <- allDatIndiv[1:3,c("elkYr", "sprStartMean")]  %>%
+          mutate(test = paste(sprStartMean, substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sep = "-"),
+            test = as.Date(test, format = "%m-%d-%Y"))      
+      str(z) # y. cool do that.
+       
+      
+      
+  #### labeling season for each location ####
+      
+      # just make this be locsFormat after you get it working
+      z <- sample_n(locsFormat, 20, replace=F) %>%
+        # add season dates for each individual
+        left_join(datesIndivs, by = c("elkYr", "Herd")) 
+      # oh right, shit, now you have to set dates for indivs not used in behav analysis.
+      # do that first? nah, do this quick while you're in the middle of it, then go back
+      
+      z <- sample_n(locsModel, 20, replace=F) %>%
+        left_join(datesIndivs, by = c("elkYr", "Herd")) %>%
+        mutate(Season = ifelse(
+          between(Date, win1Start, win1End), "Winter", "YTRAS")) # n
+      
+      z <- sample_n(locsModel, 20, replace=F) %>%
+        left_join(datesIndivs, by = c("elkYr", "Herd")) %>%
+        mutate(Season = ifelse(Date >= win1Start & Date <= win1End, "Winter",
+          ifelse(Date >= sprStart & Date <= sprEnd, "Spring",
+            ifelse(Date >= smrStart & Date <= smrEnd, "Summer", "Fall")))) %>%
+        dplyr::select(elkYr, herdYr, Date, Season, win1Start, win1End, sprStart, 
+          sprEnd, smrStart, smrEnd, fallStart, fallEnd, win2Start) # y :)
+      
+      
+      
+  #### labeling season for non-model elk #### 
+      
+      # current thought for best plan
+      # remove modeled elk from locsFormat, then figure out which of the ones left over had >20 locs per season
+        # will req adding elkYr, and using herd average dates
+      # add those elk to indivDates and use same pipe to id dates, add column for behavAnalysis 0/1
+        # this is probably better, then can subset whatever from that one master
+      
+      # this works, but need to expand to incl all elk
+        
+        # identify season for locs recorded only by elk used in behavioral analysis
+        locsSeasons <- locsModel %>%
+          left_join(datesIndivsMod, by = c("elkYr", "Herd")) %>%
+          mutate(Season = ifelse(Date >= win1Start & Date <= win1End, "Winter",
+            ifelse(Date >= sprStart & Date <= sprEnd, "Spring",
+              ifelse(Date >= smrStart & Date <= smrEnd, "Summer", "Fall")))) %>%
+          dplyr::select(elkYr, herdYr, Date, Season, win1Start, win1End, sprStart, 
+            sprEnd, smrStart, smrEnd, fallStart, fallEnd, win2Start)
+      
+      
+    # this also works, but now you want it to be for all elk (start with locsFormat)
+      # and add an identifier for whether incld in behav analysis or not
+        # Define seasons for all individuals
+        datesIndivsMod <- reclass %>%
+          #### ~ KRISTIN YOU MAY NEED TO DELETE THIS ~ ####
+          # remove the single (non-migratory) elk from Greycliff herd #
+          filter(elkYr != "BRUC15042-2016") %>%
+          # start with behavior classifications
+          rename(behav = Reclass) %>%
+          # add herd and herd-year
+          left_join(elkYrHerd, by = "elkYr") %>%
+          # add herd average dates (to define seasons for non-migrants)
+          left_join(datesHerd, by = "Herd") %>%
+          # add individuals' dates if migrated
+          left_join(datesMigrants, by = "elkYr") %>%
+          # remove and fix duplicated columns from joins
+          dplyr::select(-c(Herd.y, herdYr.y)) %>%
+          rename(Herd = Herd.x, herdYr = herdYr.x) %>%
+          # define spring and fall dates for each individual
+          mutate(
+            # if migrant, use the individual's movement date
+            sprStart = ifelse(!is.na(sprSt), as.character(sprSt), 
+              # otherwise use the herd average date (with correct year)
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprStartMean, sep = "-")),
+            sprEnd = ifelse(!is.na(sprEn), as.character(sprEn), 
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprEndMean, sep = "-")),
+            fallStart = ifelse(!is.na(fallSt), as.character(fallSt), 
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallStartMean, sep = "-")),
+            fallEnd = ifelse(!is.na(fallEn), as.character(fallEn), 
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallEndMean, sep = "-")),
+            # format those dates as dates
+            sprStart = as.Date(sprStart, format = "%Y-%m-%d"),
+            sprEnd = as.Date(sprEnd, format = "%Y-%m-%d"),
+            fallStart = as.Date(fallStart, format = "%Y-%m-%d"),
+            fallEnd = as.Date(fallEnd, format = "%Y-%m-%d"),
+            # and use them to define winter and summer
+            smrStart = sprEnd+1,
+            smrEnd = fallStart-1,
+            win1End = sprStart-1,            
+            win2Start = fallEnd+1,
+            win1Start = win2Start-365) %>%
+          # remove extraneous columns
+          dplyr::select(elkYr, behav, Herd, herdYr, 
+            win1Start, win1End, sprStart, sprEnd, smrStart, smrEnd, fallStart, fallEnd, win2Start)      
+        
+      
+    
+      
+      
+      
+    # tweaking this to be for all elk 
+      # and add an identifier for whether incld in behav analysis or not
+        
+        # Define seasons for all individuals
+        datesIndivs <- reclass %>%
+          # start with behavior classifications
+          rename(behav = Reclass) %>%
+          # add herd and herd-year
+          left_join(elkYrHerd, by = "elkYr") %>%   
+          # add identifier for whether elk was included in behavior analysis
+          mutate(inBehavAnalysis == 1) %>%
+          # add elk that weren't included in behavior analysis
+          bind_rows(elkYrHerdNoBehav) %>%
+          left_join(datesHerd, by = "Herd") %>%
+          # and indicate that they weren't included
+          mutate(inBehavAnalysis = ifelse(inBehavAnalysis == 1, 1, 0)) %>%
+          # add individuals' dates if migrated
+          left_join(datesMigrants, by = c("elkYr", "Herd", "herdYr")) %>%
+          # define spring and fall dates for each individual
+          mutate(
+            # if migrant, use the individual's movement date
+            sprStart = ifelse(!is.na(sprSt), as.character(sprSt), 
+              # otherwise use the herd average date (with correct year)
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprStartMean, sep = "-")),
+            sprEnd = ifelse(!is.na(sprEn), as.character(sprEn), 
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprEndMean, sep = "-")),
+            fallStart = ifelse(!is.na(fallSt), as.character(fallSt), 
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallStartMean, sep = "-")),
+            fallEnd = ifelse(!is.na(fallEn), as.character(fallEn), 
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallEndMean, sep = "-")),
+            # format those dates as dates
+            sprStart = as.Date(sprStart, format = "%Y-%m-%d"),
+            sprEnd = as.Date(sprEnd, format = "%Y-%m-%d"),
+            fallStart = as.Date(fallStart, format = "%Y-%m-%d"),
+            fallEnd = as.Date(fallEnd, format = "%Y-%m-%d"),
+            # and use them to define winter and summer
+            smrStart = sprEnd+1,
+            smrEnd = fallStart-1,
+            win1End = sprStart-1,            
+            win2Start = fallEnd+1,
+            win1Start = win2Start-365) %>%
+          # remove extraneous columns
+          dplyr::select(elkYr, behav, Herd, herdYr, inBehavAnalysis,
+            win1Start, win1End, sprStart, sprEnd, smrStart, smrEnd, fallStart, fallEnd, win2Start) %>%
+          #### ~ KRISTIN IF YOU DON'T DELETE THIS, MOVE IT TO THE START OF THE CODE ~ ###
+          # remove the single (non-migratory) elk from Greycliff herd #
+          filter(Herd != "Greycliff")
+        
+
+        # identify season for all recorded collar locations
+        locsSeasons <- locsFormat %>%
+          left_join(datesIndivs, by = c("elkYr", "Herd")) %>%
+          #### ~ KRISTIN IF YOU DON'T DELETE THIS, MOVE IT TO THE START OF THE CODE ~ ###
+          # remove the single (non-migratory) elk from Greycliff herd #
+          filter(Herd != "Greycliff") %>%        
+          mutate(Season = ifelse(Date >= win1Start & Date <= win1End, "Winter",
+            ifelse(Date >= sprStart & Date <= sprEnd, "Spring",
+              ifelse(Date >= smrStart & Date <= smrEnd, "Summer", "Fall")))) %>%
+          group_by(elkYr, Season) %>%
+          filter(n() >= 20) %>%
+          ungroup() %>%
+          dplyr::select(elkYr, herdYr, Herd, AnimalID, CollarID, inBehavAnalysis,
+            Date, Time, Latitude, Longitude, Season, 
+            win1Start, win1End, sprStart, sprEnd, smrStart, smrEnd, fallStart, fallEnd, win2Start) %>%
+          droplevels()
+        
+        
+        
+#### Defining winter & summer per indiv based on shortest timeframe ####
+        
+    
+    # determine shortest winter timeframe
+    datesIndivs %>% mutate(winDur = win1End-win1Start) %>% summarise(min(winDur))
+        
+        
+    ## current challenge: come indivs have negative winter durations
+    ## because they changes their migration date the subsequent year
+    ## potential solutions:
+      ## calculate -- oh yeah, duh, just calc from start date (1st loc) to winEnd.
+        
+    ## summer
+        
+         
+         # determine summer timeframe
+         smr <- datesIndivs %>%
+           mutate(smrDur = as.numeric(smrEnd-smrStart)) %>%
+           dplyr::select(elkYr, behav, Herd, herdYr, smrDur, smrStart, smrEnd) %>%
+           distinct()
+         min(smr$smrDur) # shit, got negatives here of course...from overlappers
+         
+         
+         # what's min herd timeframe?
+         min(datesHerd$smrDurMean) # 32, cool.
+         
+         # what's min migrant timeframe?
+         min(datesMigrants$smrDr) # 1. oh duh, those are those overlappers. 
+ 
+         
+         # some don't have 5 relocs??
+        z <- viLocs %>%
+          group_by(elkYr, seasonVI) %>%
+          filter(n()<5)
+        # it's the BROOT whose collar sucked during summer
+        
+        View(viLocs[viLocs$elkYr == "BROOT0021-2011",])
+        
+        
+        
+#### PREserving code i'm changing bc github has failed me in rstudio ####
+        
+        
+        
+
+        
+        # Per herd
+        dateDistHerd <- dateDistHerdYr %>%
+          # only keep relevant columns
+          dplyr::select(
+            herdYr, nMig, nIndivs, sprStartMean, sprEndMean, sprDurMean, 
+            fallStartMean, fallEndMean, fallDurMean, smrDurMean) %>%
+          # convert dates to dayofyear (for averaging across years)
+          mutate(
+            Herd = substr(herdYr, 1, nchar(herdYr)-5),
+            sprStartMean = as.POSIXlt(sprStartMean)$yday,
+            sprEndMean = as.POSIXlt(sprEndMean)$yday,
+            fallStartMean = as.POSIXlt(fallStartMean)$yday,
+            fallEndMean = as.POSIXlt(fallEndMean)$yday) %>%
+          # fix fall return dates in january (add 365 days to the dayofyear)
+          # otherwise averaging dates can make fall migration end before it starts
+          mutate(fallEndMean = ifelse(fallEndMean < 20, fallEndMean + 365, fallEndMean)) %>%
+          group_by(Herd) %>%
+          # average dates as weighted mean (weighted by number of migrants in each yr)
+          summarise(
+            nElk = sum(nMig),
+            nYrs = n(),
+            sprStartMean = weighted.mean(sprStartMean, nMig),
+            sprEndMean = weighted.mean(sprEndMean, nMig),
+            fallStartMean = weighted.mean(fallStartMean, nMig),
+            fallEndMean = weighted.mean(fallEndMean, nMig),
+            sprDurMean = round(weighted.mean(sprDurMean, nMig)),
+            fallDurMean = round(weighted.mean(fallDurMean, nMig)),
+            smrDurMean = round(weighted.mean(smrDurMean, nMig)),
+            winDurMean = I(365-sprDurMean-fallDurMean-smrDurMean)) %>%
+          mutate(
+            sprStartMean = format(strptime(sprStartMean, format = "%j"), format = "%m-%d"),
+            sprEndMean = format(strptime(sprEndMean, format = "%j"), format = "%m-%d"),
+            fallStartMean = format(strptime(fallStartMean, format = "%j"), format = "%m-%d"),
+            fallEndMean = format(strptime(fallEndMean, format = "%j"), format = "%m-%d")) %>%
+          # add herd-years for each herd
+          left_join(dplyr::select(elkYrHerd, c(Herd, herdYr)), by = "Herd") %>%
+          # add correct year of herd-year to averaged dates
+          mutate(
+            sprStartHerdYr = as.Date(
+              paste(substr(herdYr, nchar(herdYr)-3, nchar(herdYr)), sprStartMean, sep = "-"),
+              format = "%Y-%m-%d"),
+            sprEndHerdYr = as.Date(
+              paste(substr(herdYr, nchar(herdYr)-3, nchar(herdYr)), sprEndMean, sep = "-"),
+              format = "%Y-%m-%d"),
+            fallStartHerdYr = as.Date(
+              paste(substr(herdYr, nchar(herdYr)-3, nchar(herdYr)), fallStartMean, sep = "-"),
+              format = "%Y-%m-%d"),
+            fallEndHerdYr = as.Date(
+              paste(substr(herdYr, nchar(herdYr)-3, nchar(herdYr)), fallEndMean, sep = "-"),
+              format = "%Y-%m-%d")) %>%
+          # remove duplicate rows
+          distinct()
+         # export
+         write.csv(dateDistHerd, "herdDatesDist.csv", row.names = F)       
+         

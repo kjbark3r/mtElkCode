@@ -19,12 +19,14 @@
 
     # list of packages needed
     packages <- c(
-      "RODBC",       ## connect to Access database
-      "migrateR",    ## migratory behavior analysis
-      "sp",          ## spatial work, eg setting projections
-      "tibble",
-      "tidyr",
-      "dplyr")       ## data manipulation and general awesomeness
+      "RODBC",        ## connect to Access database
+      "migrateR",     ## migratory behavior analysis
+      "adehabitatHR", ## volume intersection calculation
+      "sp",           ## spatial work, eg setting projections
+      "rgdal",        ## create and store shapefiles
+      "tibble",       ## apparently required for tidyr/dplyr now
+      "tidyr",        ## data manipulation and general awesomeness
+      "dplyr")        ## data manipulation and general awesomeness
 
 
     # have to install migrateR package specially (take it up with spitz)
@@ -59,7 +61,7 @@
     
     
     
-    #### Define your spatial projection ####    
+    #### Define spatial projection ####    
       
       # replace "latlong" if needed
       proj <- latlong  
@@ -85,7 +87,7 @@
      
       # pull GPS collar locations from database (this takes forEVer)
       locsRaw <- sqlQuery(channel, paste("select * from ElkGPS"))
-      
+
       
       # close database connection
       odbcCloseAll()
@@ -97,6 +99,8 @@
       
       # format collar data
       locsFormat <- locsRaw %>%
+        # remove the single elk from the Greycliff herd
+        filter(Herd != "Greycliff") %>%
         # correctly classify each column
         mutate(
           # remove messed-up date from Time 
@@ -109,8 +113,9 @@
           # identify elk-year
           elkYr = paste(AnimalID, yearLoc, sep = "-"),
           # combine date and time in POSIXct format
-          DT = as.POSIXct(paste(Date, Time, sep = " "), format = "%Y-%m-%d %H:%M:%S")
-        ) 
+          DT = as.POSIXct(paste(Date, Time, sep = " "), format = "%Y-%m-%d %H:%M:%S")) %>%
+        # remove NA locations
+        filter(!is.na(Latitude))
 
       
       
@@ -125,8 +130,6 @@
 
       # subset individuals and locations to be used in analysis
       locsModel <- locsFormat %>%
-        # remove NA locations
-        filter(!is.na(Latitude)) %>%        
         # only use indivs with at least 9 mos of locs
         group_by(elkYr) %>%
         filter(length(unique(monthLoc)) > 8) %>%
@@ -158,34 +161,59 @@
       locsModel <- as.data.frame(spTransform(SpatialPointsDataFrame(
         data.frame("utmX" = locsModel$Longitude, "utmY" = locsModel$Latitude), 
         locsModel, proj4string = latlong), utm))    
+
       
       
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
-    #### ~~~~ KRISTIN DELETE THIS WHEN DB GETS FINALIZED ~~~~ ####
-            # it's the elk with the screwy locations #
       
-      locsModel <- filter(locsModel, elkYr != "BROOT0015-2011")
+      
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #       
       
       
       
       
-   
-      # identify unique herds and indivs 
+### ### ### ### ### ### ### ### ### ### 
+####    |SUMMARIZE PREPPED DATA|   ####
+### ### ### ### ### ### ### ### ### ###
+      
+
+
+      #### Elk-years, herds, and herd-years used in behavioral analysis ####
       elkYrHerd <- locsModel %>%
         dplyr::select(elkYr, Herd) %>%
-        distinct()
+        distinct() %>%
+        mutate(herdYr =  paste(Herd, substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sep = "-"))  
       
-      # KRISTIN remove these if unimportant
+      #### Just elk-years used in behavioral analysis ####
       elkYrs <- unique(dplyr::select(locsModel, elkYr)) 
-      herds <- unique(dplyr::select(locsModel, Herd))   
       
+      #### Just herds used in behavioral analysis ####
+      herds <- unique(dplyr::select(locsModel, Herd))
       
+      #### Elk-years, herds, and herd-years NOT used in behavioral analysis ####
+      elkYrHerdNoBehav <- locsFormat %>%
+        anti_join(elkYrs) %>%
+        dplyr::select(elkYr, Herd) %>%
+        distinct() %>%
+        mutate(herdYr =  paste(Herd, substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sep = "-")) 
+      
+      #### All elk-years, herds, and herd-years ####
+      elkYrHerdAll <- bind_rows(elkYrHerd, elkYrHerdNoBehav)    
 
 
-  
+
+            
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
+    
+
+    
+### ### ### ### ### ###
+####    |MODELS|   ####
+### ### ### ### ### ###     
+
       
-    #### Format data as ltraj object ### 
+      
+    #### Format data as ltraj object ####
       
       lt <- as.ltraj(
         xy = locsModel[,c("utmX", "utmY")], 
@@ -193,157 +221,47 @@
         id = locsModel$elkYr
         )  
 
-
-            
-
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
-    
-    
-### ### ### ### ### ### ### ### ### ### ### ### ##
-####  |CHOOSE INDIVIDUAL STARTING LOCATIONS|  ####
-### ### ### ### ### ### ### ### ### ### ### ### ##
-    
-
-    
-   #### Identify most parsimonious starting location for NSD (rNSD) ####
       
-    
-    rlocs <- findrloc(lt) # see troubleshootingNSD.R if you get errors here   
-  
-    
       
-     #### Make sure no indivs will throw errors due to rloc (a common issue)
-    
-       # redefine kappa parameter to help avoid issues
-        uk64 <- pEst(u.k = log(64))
-        
-        # create dataframe to store error messages in
-        errors <- data.frame(elkYr = unique(locsModel$elkYr), Err = NA)
-        
-        # for each individual
-        for(i in 1:nrow(rlocs)) {
-          
-          # subset its locations
-          ilocs <- droplevels(semi_join(locsModel, rlocs[i,], by = c("elkYr" = "burst")))
-          
-          # make it ltraj
-          ilt <- as.ltraj(xy = ilocs[,c("utmX", "utmY")], date = ilocs$DT, id = ilocs$elkYr)
-          
-          # try the model and store error message if any
-          # (note: warning messages are generally ok here)
-          tryCatch(mvmtClass(ilt, p.est = uk64, rloc = rlocs[i,"rloc"]), error = function(e) {
-                  errors[i,"Err"] <<- conditionMessage(e)
-                  NULL
-              })
-        }
-        
-        # individuals and the errors they had
-        errors <- errors[!is.na(errors$Err),]
-        View(errors)
-        
-        # If no errors, consider yourself lucky and move on to the next section.
-        # If errors, run KRISTIN INSERT EITHER PACKAGE OR FILE NAME HERE to assess.
-        # Sometimes you can just rerun above code from "locsModel <- ..." to fix,  
-        # if issues are just due to the locations that happened to be randomly selected.
-
-                
-
-
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
-    
-    
-### ### ### ### ### ###
-####    |MODELS|   ####
-### ### ### ### ### ###     
-
-       
-    
-    #### Define initial parameter constraints ####
-        
-        # expand default duration on summer range to allow up to 8 months (default was 84 days)
-        timing <- pEst(u.r = 240)  
-
+    #### Identify most parsimonious starting location for NSD (rNSD) ####
       
-    
-    #### Define base model ####
-        
-        
-        # rNSD with expanded duration parameter and updated rloc 
-        mBase <- mvmtClass(lt, rloc = rlocs$rloc, p.est = timing) 
-        
-        # print number of convergence issues
-        length(which(!fullmvmt(mBase))) # 65 (2018-07-03)
-    
-    
+      # see troubleshootingNSD.R if you get errors here
+      rlocs <- findrloc(lt) 
       
-    #### Refine base model to address as many convergence issues as possible ####
-        
-          
-        # allow up to 8km daily displacement within the same resident range
-        uk64 <- pEst(u.k = log(64))
-        
-        # run updated model
-        mref1 <- refine(mBase, p.est = uk64)
-        
-        # print number of convergence issues
-        length(which(!fullmvmt(mref1))) # 30 (2018-07-03)
-
-
       
+      
+    #### Redefine some parameters to help avoid convergence issues ####
+      
+      
+      # Allow summer range duration up to 8mos
+      refRho <- pEst(u.r = 240)
+
+      # Use that for base model (see troubleshootingNSD.R if errors. Warnings are OK.)       
+      mBase <- mvmtClass(lt, rloc = rlocs$rloc, p.est = refRho)
+      
+
+      # Allow resident up to 8km daily displacement
+      refKappa <- pEst(u.k = log(64))
+      
+      # Use that to update models, where applicable
+      mUpd <- refine(mBase, p.est = refKappa)
+
+        
+ 
     #### Identify top model for each individual ####
       
-        # don't consider mixmig or nomad (see thesis ch2 appendix s1 for more info)
-        mTop <- topmvmt(mref1, omit = c("mixmig", "nomad"))
-        
-        # identify prelimiary top model per indiv
-        topMods <- data.frame(elkYr = elkYrs, PrelimClassn = names(mTop))
-        
-        # store
-        write.csv(topMods, file = "prelimBehavClassns.csv", row.names=F)
-          
-        # take quick look at prelim classns 
-        summary(topMods$PrelimClassn)
+      # don't consider mixmig or nomad (see thesis appendix s1 for details)
+      mTop <- topmvmt(mUpd, omit = c("mixmig", "nomad"))
+      
+      # identify preliminary top model per indiv
+      topMods <- data.frame(elkYr = elkYrs, PrelimClassn = names(mTop))
+
+      # take quick look at prelim classns 
+      summary(topMods$PrelimClassn)
 
 
 	  
 
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
-    
-    
-### ### ### ### ### ###
-####  |NSD PLOTS|  ####
-### ### ### ### ### ###     
-
-
-      
-      #### Define number of plots to create ####
-          
-        numPlots <- nrow(elkYrs)
-        myPlots <- vector(numPlots, mode='list')
-      
-      
-      
-      ##### Create a plot for each individual ####
-      
-        for(i in 1:numPlots) {
-          plot(mref1[[i]])
-          myPlots[[i]] <- recordPlot()
-        }
-        graphics.off()
-      
-      
-      
-      #### Create and store one pdf file of all plots ####
-        
-        pdf('NSDplots.pdf', onefile = TRUE)
-        for(my.plot in myPlots) {
-          replayPlot(my.plot)
-        }
-        graphics.off()
-      
-      
-      
-      
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
       
         
@@ -355,7 +273,7 @@
       
       
       
-      #### Classify behaviors using parameter values ####
+      #### Extract parameters from behavior models ####
       
       
           # Create dataframe of parameters from each indiv model
@@ -374,7 +292,7 @@
                              gamma = as.numeric())
           
           
-          # extract and store parameters of top models
+          # pull parameters from top models
           for (i in 1:length(paramlist)){
             # extract data for each model
             dat <- paramlist[[i]]
@@ -388,15 +306,18 @@
 
       
       
-      ## implement rules to reclassify some behaviors based on parameters ##
+      #### Use parameters to reclassify behaviors when applicable ####
       
           
+          # starting with model parameters
           reclass <- params %>%
             # if "resident" moved >900km2, reclassify as Migrant (these are actually mixed migrants)
             mutate(Reclass = ifelse(Model == "resident" & gamma > 900, "migrant", Model)) %>%
             # if animal "dispersed" or "migrated" <6.7 km, reclassify as Resident
             mutate(Reclass = ifelse(
-              Reclass == "disperser" &  delta < 45 | Reclass == "migrant" &  !is.na(delta) & delta < 45, "resident", Reclass)) %>%
+              Reclass == "disperser" &  delta < 45 | 
+              Reclass == "migrant" &  !is.na(delta) & delta < 45, 
+              "resident", Reclass)) %>%
             # if animal "migrated" < 8.7km or "resided" within > 6.7km, reclassify as Other
             mutate(Reclass = ifelse(Reclass == "migrant" & !is.na(delta) & delta < 75, "other", Reclass)) %>%
             mutate(Reclass = ifelse(Reclass == "resident" & !is.na(gamma) & gamma > 45, "other", Reclass)) %>%  
@@ -407,12 +328,53 @@
 
 
 
+
   
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
   
+
+    
+### ### ### ### ### ###
+####  |NSD PLOTS|  ####
+### ### ### ### ### ###     
+
+        
+        
+      ## For visual checks to verify that the updated behavior 
+      ## classifications make sense based on the locations
+
+      
+      #### Define number of plots to create ####
           
-    
-    
+        numPlots <- nrow(elkYrs)
+        myPlots <- vector(numPlots, mode='list')
+      
+      
+      
+      ##### Create a plot for each individual ####
+      
+        for(i in 1:numPlots) {
+          plot(mUpd[[i]])
+          myPlots[[i]] <- recordPlot()
+        }
+        graphics.off()
+      
+      
+      
+      #### Create and store one pdf file of all plots ####
+        
+        pdf('NSDplots.pdf', onefile = TRUE)
+        for(my.plot in myPlots) {
+          replayPlot(my.plot)
+        }
+        graphics.off()    
+        
+        
+        
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #    
+        
+        
+        
 ### ### ### ### ### ### ### ### ###
 ####    |BEHAVIOR SUMMARIES|   ####
 ### ### ### ### ### ### ### ### ###
@@ -421,28 +383,45 @@
 
         #### Final behavioral classifications, including Herd info ####
           
-        behav <- reclass %>%
-          left_join(elkYrHerd, by = "elkYr") %>%
-          rename(Behav = Reclass, ParamMod = Model) %>%
-          dplyr::select(c(elkYr, Herd, Behav, delta, phi, theta, rho, phi2, kappa, ParamMod)) %>%
-          arrange(elkYr)
-        write.csv(behav, "behavParamsPerIndiv.csv", row.names = F)
+          behav <- reclass %>%
+            left_join(elkYrHerd, by = "elkYr") %>%
+            rename(Behav = Reclass, ParamMod = Model) %>%
+            dplyr::select(c(elkYr, Herd, Behav, delta, phi, theta, rho, phi2, kappa, ParamMod)) %>%
+            arrange(elkYr)
+          write.csv(behav, "behavParamsPerIndiv.csv", row.names = F)
         
         
         
-        #### Herd-level summaries - Ppns of behavs; mean parameters ####
+        #### Herd-level summaries - Ppns of behavs ####
         
-        herdBehav <- behav %>%
-    	    group_by(Herd) %>%
-    	    summarise(nIndivs = n(),
-    	              nMig = length(which(Behav == "migrant")),
-    	              nRes = length(which(Behav == "resident")),
-    	              nOth = length(which(Behav == "other"))) %>%
-    	    mutate(ppnMig = round(nMig/nIndivs, digits = 2),
-    	           ppnRes = round(nRes/nIndivs, digits =2),
-    	           ppnOth = round(nOth/nIndivs, digits = 2)) %>%
-    	    dplyr::select(Herd, ppnMig, ppnRes, ppnOth, nIndivs)
-        write.csv(herdBehav, "behavPerHerd.csv", row.names=F)
+          # by herd
+          herdBehav <- behav %>%
+      	    group_by(Herd) %>%
+      	    summarise(nIndivs = n(),
+      	              nMig = length(which(Behav == "migrant")),
+      	              nRes = length(which(Behav == "resident")),
+      	              nOth = length(which(Behav == "other"))) %>%
+      	    mutate(ppnMig = round(nMig/nIndivs, digits = 2),
+      	           ppnRes = round(nRes/nIndivs, digits =2),
+      	           ppnOth = round(nOth/nIndivs, digits = 2)) %>%
+      	    dplyr::select(Herd, ppnMig, ppnRes, ppnOth, nIndivs)
+          write.csv(herdBehav, "behavPerHerd.csv", row.names=F)
+          
+          
+          # by herd-year
+          herdYrBehav <- elkYrHerd %>%
+            left_join(behav, by = "elkYr") %>%
+            group_by(herdYr) %>%
+            summarise(nIndivs = n(),
+      	              nMig = length(which(Behav == "migrant")),
+      	              nRes = length(which(Behav == "resident")),
+      	              nOth = length(which(Behav == "other"))) %>%
+      	    mutate(ppnMig = round(nMig/nIndivs, digits = 2),
+      	           ppnRes = round(nRes/nIndivs, digits =2),
+      	           ppnOth = round(nOth/nIndivs, digits = 2)) %>%
+      	    dplyr::select(herdYr, ppnMig, ppnRes, ppnOth, nIndivs)
+          write.csv(herdYrBehav, "behavPerHerdYr.csv", row.names=F)
+          
         
         
         
@@ -461,47 +440,35 @@
     #### Determine spring and fall movement dates for migrants  ####
         
         
-        # Identify mixed migrants (need to handle specially)
+        # identify mixed migrants (can't use their movement dates)
         indivsMix <- reclass %>%
           filter(Reclass == "migrant" & gamma > 900) %>%
           dplyr::select(elkYr)
-        indexMix <- which(elkYrs$elkYr %in% indivsMix$elkYr)
+
         
-        
-        # Identify migrants
+        # identify migrants
         indivsMig <- reclass %>%
           filter(Reclass == "migrant") %>%
-          # but not mixed migrants bc they don't always have a migrant model
+          # but not mixed migrants bc their dates make no sense
           anti_join(indivsMix, by = "elkYr") %>%
           dplyr::select(elkYr)  
         indexMig <- which(elkYrs$elkYr %in% indivsMig$elkYr)
 
         
         # extract movement dates from migrant models
-        datesModelA <- list()
+        datesModels <- list()
         for (i in 1:length(indexMig)) {
-          datesModelA[i] <- mvmt2dt(mref1[[indexMig[i]]])
-          names(datesModelA)[[i]] <- elkYrs[indexMig[i], "elkYr"]
+          datesModels[i] <- mvmt2dt(mUpd[[indexMig[i]]])
+          names(datesModels)[[i]] <- elkYrs[indexMig[i], "elkYr"]
         }
         
-        # extract movement dates from mixed-migrant models
-        datesModelB <- list()
-        for (i in 1:length(indexMix)) {
-          datesModelB[i] <- mvmt2dt(mref1[[indexMix[i]]], mod = "mixmig")
-          names(datesModelB)[[i]] <- elkYrs[indexMix[i], "elkYr"]
-        }
-        
-        # combine dates to incl migrants and mixed-migrants
-        datesModels <- c(datesModelA, datesModelB)
+
+        # create dataframe to store properly formatted date data
+        datesMvmt <- as.data.frame(matrix(ncol = 5, nrow = 0))
+        colnames(datesMvmt) <- c("elkYr", "end1", "end2", "str1", "str2")
         
         
-        
-        # Create dataframe to store properly formatted date data
-        datesMig <- as.data.frame(matrix(ncol = 5, nrow = 0))
-        colnames(datesMig) <- c("elkYr", "end1", "end2", "str1", "str2")
-        
-        
-        # Format & store movement dates for all migrants & mixed migrants
+        # Format & store movement dates for all migrants
         for (i in 1:length(datesModels)) {
           
           # For each individual
@@ -520,13 +487,13 @@
           dat <- spread(dat, key = "param", value = "date")
 
           # And combine
-          datesMig <- bind_rows(datesMig, dat)
+          datesMvmt <- bind_rows(datesMvmt, dat)
           
         }
            
         
-        # Calculate movement durations, seasonal dates, and distance moved
-        datesIndiv <- datesMig %>%
+        # Calculate movement durations, seasonal dates, and distance moved for migrants
+        datesMigrants <- datesMvmt %>%
           # pull spring and fall migration dates from the above
           mutate(
             sprSt = as.Date(str1),
@@ -547,98 +514,369 @@
           mutate(dist = as.numeric(round(dist, 2)), smrDr = as.numeric(round(smrDr))) %>%
           # add herd and herd-year to facilitate later herd summaries etc
           left_join(elkYrHerd, by = "elkYr") %>%
-          mutate(
-            yr = substr(elkYr, nchar(elkYr)-3, nchar(elkYr)),
-            herdYr = paste(Herd, yr, sep = "-"))
-
+          mutate(yr = substr(elkYr, nchar(elkYr)-3, nchar(elkYr)))
         
-        # Summarize the above per herd        
-        datesHerd <- datesIndiv %>%
+        
+
+    #### Herd-level summaries - movement dates, durations, and distances moved  ####  
+        
+        
+        
+        # Per herd-year        
+        dateDistHerdYr <- datesMigrants %>%
           group_by(herdYr) %>%
           summarise(
             nMig = n(),
             sprStartMean = mean(sprSt),
-            sprStartSd = as.numeric(sd(sprSt)),
+            sprStartSd = round(as.numeric(sd(sprSt))),
             sprEndMean = mean(sprEn),
-            sprEndSd = as.numeric(sd(sprEn)),
-            sprDurMean = mean(sprDr),
-            sprDurSd = sd(sprDr),
+            sprEndSd = round(as.numeric(sd(sprEn))),
+            sprDurMean = round(mean(sprDr)),
+            sprDurSd = round(sd(sprDr)),
             fallStartMean = mean(fallSt),
-            fallStartSd = as.numeric(sd(fallSt)),
+            fallStartSd = round(as.numeric(sd(fallSt))),
             fallEndMean = mean(fallEn),
-            fallEndSd = as.numeric(sd(fallEn)),
-            fallDurMean = mean(fallDr),
-            fallDurSd = sd(fallDr),
-            smrDurMean = mean(smrDr),
-            smrDurSd = sd(smrDr),
-            distMean = mean(dist),
-            distSd = sd(dist))
+            fallEndSd = round(as.numeric(sd(fallEn))),
+            fallDurMean = round(mean(fallDr)),
+            fallDurSd = round(sd(fallDr)),
+            smrDurMean = round(mean(smrDr)),
+            smrDurSd = round(sd(smrDr)),
+            distMean = round(mean(dist), 2),
+            distSd = round(sd(dist), 2)) %>%
+          left_join(dplyr::select(herdYrBehav, herdYr, nIndivs), by = "herdYr") %>%
+          # order columns
+          dplyr::select(c(herdYr, nMig, nIndivs, 
+            sprStartMean, sprEndMean, fallStartMean, fallEndMean, 
+            sprDurMean, fallDurMean, smrDurMean, distMean,
+            sprStartSd, sprEndSd, sprDurSd, fallStartSd, fallEndSd, fallDurSd,
+            smrDurSd, distSd)) 
+        # export
+        write.csv(dateDistHerdYr, "herdYrDatesDist.csv", row.names = F)
         
+
         
-        # Add all date and duration info to full indiv list
-        allDatIndiv <- reclass %>%
-          rename(behav = Reclass) %>%
-          left_join(elkYrHerd, by = "elkYr") %>%
-          mutate(herdYr = paste(Herd, substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sep = "-")) %>%
-          left_join(datesHerd, by = "herdYr") %>%
-          left_join(datesIndiv, by = "elkYr") %>%
-          dplyr::select(-c(Herd.y, herdYr.y)) %>%
-          rename(Herd = Herd.x, herdYr = herdYr.x) %>%
-          # set dates per indiv based on either their migration or on average herd date
+        # Per herd
+        dateDistHerd <- dateDistHerdYr %>%
+          # only keep relevant columns
+          dplyr::select(
+            herdYr, nMig, nIndivs, sprStartMean, sprEndMean, sprDurMean, 
+            fallStartMean, fallEndMean, fallDurMean, smrDurMean, distMean) %>%
+          # convert dates to dayofyear (for averaging across years)
           mutate(
-            sprStart = as.Date(ifelse(behav == "migrant", sprSt, sprStartMean), origin = '1970-01-01'),
-            sprEnd = as.Date(ifelse(behav == "migrant", sprEn, sprEndMean), origin = '1970-01-01'),
-            sprDur = ifelse(behav == "migrant", sprDr, sprDurMean),
-            fallStart = as.Date(ifelse(behav == "migrant", fallSt, fallStartMean), origin = '1970-01-01'),
-            fallEnd = as.Date(ifelse(behav == "migrant", fallEn, fallEndMean), origin = '1970-01-01'),
-            fallDur = ifelse(behav == "migrant", fallDr, fallDurMean),
-            smrDur = ifelse(behav == "migrant", smrDr, smrDurMean),
-            dist = ifelse(behav == "migrant", dist, NA)) %>%   
-          dplyr::select(elkYr, Herd, herdYr, behav, 
-            sprStart, sprEnd, sprDur, fallStart, fallEnd, fallDur, smrDur, dist) 
+            Herd = substr(herdYr, 1, nchar(herdYr)-5),
+            sprStartMean = as.POSIXlt(sprStartMean)$yday,
+            sprEndMean = as.POSIXlt(sprEndMean)$yday,
+            fallStartMean = as.POSIXlt(fallStartMean)$yday,
+            fallEndMean = as.POSIXlt(fallEndMean)$yday) %>%
+          # fix fall return dates in january (add 365 days to the dayofyear)
+          # otherwise averaging dates can make fall migration end before it starts
+          mutate(fallEndMean = ifelse(fallEndMean < 20, fallEndMean + 365, fallEndMean)) %>%
+          group_by(Herd) %>%
+          # average herd dates and durations across herd-years (weighted by # of migrants in each yr)
+          summarise(
+            nMigs = sum(nMig),
+            nIndivs = sum(nIndivs),
+            nYrs = n(),
+            sprStartMean = weighted.mean(sprStartMean, nMig),
+            sprEndMean = weighted.mean(sprEndMean, nMig),
+            fallStartMean = weighted.mean(fallStartMean, nMig),
+            fallEndMean = weighted.mean(fallEndMean, nMig),
+            sprDurMean = round(weighted.mean(sprDurMean, nMig)),
+            fallDurMean = round(weighted.mean(fallDurMean, nMig)),
+            smrDurMean = round(weighted.mean(smrDurMean, nMig)),
+            winDurMean = I(365-sprDurMean-fallDurMean-smrDurMean),
+            distMean = round(weighted.mean(distMean, nMig))) %>%
+          # format averaged dates as month-year rather than dayofyear
+          mutate(
+            sprStartMean = format(strptime(sprStartMean, format = "%j"), format = "%m-%d"),
+            sprEndMean = format(strptime(sprEndMean, format = "%j"), format = "%m-%d"),
+            fallStartMean = format(strptime(fallStartMean, format = "%j"), format = "%m-%d"),
+            fallEndMean = format(strptime(fallEndMean, format = "%j"), format = "%m-%d"))
+        # export
+        write.csv(dateDistHerd, "herdDatesDist.csv", row.names = F)       
+ 
+         
+
+
+         
+        
+    #### Define seasons for all individuals  #### 
+         
+
+           
+      
+       
+      # start with behavior classifications
+      datesIndivs <- reclass %>%
+        # make the behavior label less ambiguous
+        rename(behav = Reclass) %>%
+        # add herd and herd-year
+        left_join(elkYrHerd, by = "elkYr") %>%   
+        # indicate that the elk was included in behavior analysis
+        mutate(inBehavAnalysis = 1) %>%
+        # add elk that weren't included in behavior analysis
+        bind_rows(elkYrHerdNoBehav) %>%
+        left_join(dateDistHerd, by = "Herd") %>%
+        # and indicate that they weren't included
+        mutate(inBehavAnalysis = ifelse(is.na(inBehavAnalysis), 0, 1)) %>%
+        # add individuals' dates if they migrated
+        left_join(datesMigrants, by = c("elkYr", "Herd", "herdYr")) %>%
+        # define spring and fall dates for each individual
+        mutate(
+          # if migrant, use the individual's movement date
+          sprStart = ifelse(!is.na(sprSt), as.character(sprSt), 
+            # otherwise use the herd average date (with correct year)
+            paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprStartMean, sep = "-")),
+          sprEnd = ifelse(!is.na(sprEn), as.character(sprEn), 
+            paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprEndMean, sep = "-")),
+          fallStart = ifelse(!is.na(fallSt), as.character(fallSt), 
+            paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallStartMean, sep = "-")),
+          fallEnd = ifelse(!is.na(fallEn), as.character(fallEn), 
+            paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallEndMean, sep = "-")),
+          # format those dates as dates
+          sprStart = as.Date(sprStart, format = "%Y-%m-%d"),
+          sprEnd = as.Date(sprEnd, format = "%Y-%m-%d"),
+          fallStart = as.Date(fallStart, format = "%Y-%m-%d"),
+          fallEnd = as.Date(fallEnd, format = "%Y-%m-%d"),
+          # and use them to define winter and summer
+          smrStart = sprEnd+1,
+          smrEnd = fallStart-1,
+          win1End = sprStart-1,            
+          win2Start = fallEnd+1,
+          win1Start = win2Start-365) %>%
+        # remove extraneous columns & organize
+        dplyr::select(elkYr, behav, Herd, herdYr, inBehavAnalysis,
+          win1Start, win1End, sprStart, sprEnd, smrStart, smrEnd, fallStart, fallEnd, win2Start, dist)
+      # export
+      write.csv(datesIndivs, "indivDates.csv", row.names = F)
+      
+      
+      # identify season for all recorded collar locations
+      locsSeasons <- locsFormat %>%
+        left_join(datesIndivs, by = c("elkYr", "Herd")) %>%
+        # label each location with season based on date
+        mutate(Season = ifelse(Date >= win1Start & Date <= win1End, "Winter",
+          ifelse(Date >= sprStart & Date <= sprEnd, "Spring",
+            ifelse(Date >= smrStart & Date <= smrEnd, "Summer", "Fall")))) %>%
+        # remove extraneous columns & organize
+        dplyr::select(elkYr, herdYr, Herd, AnimalID, CollarID, inBehavAnalysis, behav,
+          Date, Time, Latitude, Longitude, Season) 
+      #export
+      write.csv(locsSeasons, "locsSeasonsAll.csv", row.names = F)        
+
+
+      # identify season of locations only for elk with at least 20 locs/season
+      locsSeasonsSubset <- locsFormat %>%
+        left_join(datesIndivs, by = c("elkYr", "Herd")) %>%
+        # label each location with season based on date
+        mutate(Season = ifelse(Date >= win1Start & Date <= win1End, "Winter",
+          ifelse(Date >= sprStart & Date <= sprEnd, "Spring",
+            ifelse(Date >= smrStart & Date <= smrEnd, "Summer", "Fall")))) %>%
+        # only keep indivs with at least 20 locations recorded during a season
+        group_by(elkYr, Season) %>%
+        filter(n() >= 20) %>%
+        ungroup() %>%
+        # remove extraneous columns & organize
+        dplyr::select(elkYr, herdYr, Herd, AnimalID, CollarID, inBehavAnalysis, behav,
+          Date, Time, Latitude, Longitude, Season) %>%
+        droplevels() 
+      #export
+      write.csv(locsSeasonsSubset, "locsSeasonsSubset.csv", row.names = F)            
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
+  
+          
+    
+    
+### ### ### ### ### ### ### #
+####    |OUTPUT FILES|   ####
+### ### ### ### ### ### ### #
+        
+        
+      # increase memory limit in case shapefiles gets huge
+      memory.limit(size = 7500000)
+      
+
+      # export csvs and shps of all seasonal locs per herd, 
+      # only using elk with >=20 locs in a season
+      # (to use all elk regardless of #locs/season, 
+      #  replace "locsSeasonsSubset" with "locsSeasons")
+      
+      
+      
+      # export csvs of seasonal locs per herd    
+      for (i in 1:nrow(herds)) {
+        # for each herd
+        h <- herds$Herd[i]
+        # pull locs for just that herd
+        dat <- filter(locsSeasonsSubset, Herd == h)
+        # identify herd name without any spaces
+        outName <- gsub("\\s", "", h)
+        # name file locs + herd name
+        outPath <- paste0("locs", outName, ".csv")
+        # export
+        write.csv(dat, file = outPath, row.names = F)
+      }
+      
+      
+      # make seasonal locs spatial
+      locsSeasonsSpat <- SpatialPointsDataFrame(
+        data.frame("x"=locsSeasonsSubset$Longitude,"y"=locsSeasonsSubset$Latitude), 
+        locsSeasonsSubset, proj4string = latlong)
+      
+      
+      # export master shapefile of all seasonal locs (takes a while) 
+      dir.create("Shapefiles")
+      writeOGR(locsSeasonsSpat,
+               dsn = "./Shapefiles",
+               layer = "SeasonalLocs",
+               driver = "ESRI Shapefile",
+               overwrite_layer = TRUE) 
+      
+      
+      # export shapefiles of seasonal locs per herd (takes even longer)
+      for (i in 1:nrow(herds)) {
+        # for each herd
+        h <- herds$Herd[i]
+        dat <- filter(locsSeasons, Herd == h)
+        # make its locations spatial
+        datSpat <- SpatialPointsDataFrame(
+          data.frame("x"=dat$Longitude,"y"=dat$Latitude), 
+          dat, proj4string = latlong)
+        # identify herd name without any spaces
+        outName <- gsub("\\s", "", h)
+        # export shp with filename locs + herdname
+        writeOGR(datSpat,
+                 dsn = "./Shapefiles",
+                 layer = paste0("locs", outName),
+                 driver = "ESRI Shapefile",
+                 overwrite_layer = TRUE) 
+      }      
+
+      
+      
+
+        
+        
+        
+        
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
+  
+          
+    
+    
+### ### ### ### ###  ### ### ### ###
+####    |VOLUME INTERSECTION|   ####
+### ### ### ### ###  ### ### ### ###
+      
+      
+
+    #### Identify locations to estimate winter and summer ranges with ####    
+      
+ 
+      # winter locations
+      viLocsWin <- locsSeasons %>%
+        # subset to only elk that were included in the behavioral analysis
+        filter(inBehavAnalysis == 1) %>%
+        # add herd-averaged movement dates (to determine minimum winter timeframe)
+        left_join(dplyr::select(dateDistHerd, Herd, sprStartMean), by = "Herd") %>%
+        # add correct year to herd-averaged date
+        mutate(
+          yearElk = substr(elkYr, nchar(elkYr)-3, nchar(elkYr)),
+          sprStart = paste(yearElk, sprStartMean, sep = "-"),
+          winEnd = as.Date(as.Date(sprStart)-1)) %>%
+        # calculate length of winter for each individual
+        group_by(elkYr) %>%
+        mutate(
+          day1 = min(Date),
+          winLgth = as.numeric(winEnd-day1)) %>%
+        ungroup() %>%
+        # use same length of time to define winter for each indiv (18 days when i ran it)
+        filter(Date >= day1 & Date <= day1+min(winLgth)) %>%
+        # label as winter
+        mutate(seasonVI = "Winter") %>%
+        # remove extra columns to allow join with summer locs
+        dplyr::select(-c(Season, sprStartMean, yearElk, sprStart, winEnd, day1, winLgth)) %>%
+        distinct()
+        
+        
+      # summer locations
+      viLocsSmr <- locsSeasons %>%
+        # subset to only elk that were included in the behavioral analysis
+        filter(inBehavAnalysis == 1) %>%
+        # add herd-averaged movement dates (to determine minimum summer timeframe)
+        left_join(dplyr::select(dateDistHerd, Herd, smrDurMean), by = "Herd") %>%  
+        # add individual summer start dates
+        left_join(dplyr::select(datesIndivs, elkYr, smrStart)) %>%
+        # keep same length of time of summer locs for each indiv (32 days when i ran it)
+        filter(Date >= smrStart & Date <= smrStart + min(dateDistHerd$smrDurMean)) %>%
+        # label as summer
+        mutate(seasonVI = "Summer") %>%
+        # remove extra columns to allow join with winter locs
+        dplyr::select(-c(Season, smrDurMean, smrStart)) %>%
+        distinct()
+  
+      # combine winter and summer locations
+      viLocs <- bind_rows(viLocsWin, viLocsSmr)
+
+      
+      
+      
+    #### Calculate volume intersection between seasonal ranges ####    
+      
+      
+      # prep data to loop through indivs
+      viIndivs <- unique(viLocs$elkYr)
+      viDat <- data.frame(matrix(ncol = 3, nrow = length(viIndivs))) #blank df
+      colnames(viDat) <- c("elkYr", "VI95", "VI50")
+      
+      # calculate 95% and 50% VI for each individual
+      for(i in 1:length(viIndivs)) {
+        elk <- viIndivs[i]
+        
+        #subset individual locations
+        tempDat <- subset(viLocs, elkYr == elk) 
+        
+        #Get xy points, write to dataframe, to spatial data frame, to stateplane projection
+        xy <- data.frame("x"=tempDat$Longitude,"y"=tempDat$Latitude)
+        xy.spdf.ll <- SpatialPointsDataFrame(xy, tempDat, proj4string = latlong)
+        xy.spdf.sp <- spTransform(xy.spdf.ll,stateplane)
+      
+        #calculate kdes and volume intersections
+        kud <- kernelUD(xy.spdf.sp[,"seasonVI"], h = "href", same4all=TRUE) #LSCV not alwys converged
+        vol95 <- kerneloverlaphr(kud, method = "VI", percent = 95, conditional = TRUE)
+        vol50 <- kerneloverlaphr(kud, method = "VI", percent = 50, conditional = TRUE)
+        
+        #store results
+        viDat[[i,"elkYr"]] <- elk
+        viDat[[i,"VI95"]] <- vol95[2,1]
+        viDat[[i,"VI50"]] <- vol50[2,1]
+      }    
+
+  
+      # format indiv data (dates, durations, distances, VI)
+      indivDat <- viDat %>%
+        # round VI
+        mutate(VI95 = round(VI95, 2), VI50 = round(VI50, 2)) %>%
+        # calculate durations
+        mutate(
+          sprDur = as.numeric(round(sprEnd - sprStart)),
+          fallDur = as.numeric(round(fallEnd - fallStart)),
+          smrDur = as.numeric(round(smrEnd - smrStart))) %>%
+        dplyr::select(c(elkYr, Herd, herdYr, behav, 
+          sprStart, sprEnd, fallStart, fallEnd,
+          sprDur, fallDur, smrDur,
+          dist, VI95, VI50))
+      write.csv(indivDat, "indivDatesDistVI.csv", row.names = F)
             
         
-        
-        # Define winter for each individual
-        winIndiv <- locsModel %>%
-          # start winter at first recorded location
-          group_by(elkYr) %>%
-          summarise(winStart = first(DT)) %>%
-          droplevels() %>%
-          # end winter day before spring migration started          
-          left_join(allDatIndiv, by = "elkYr") %>%
-          mutate(winEnd = (sprStart - 1))
-          
+      
+      
 
-        
-        
-        
-        
-        
-## ## ## ## ## ~ OLDER CODE ## ## ## ## ## ## ## ## ## ## ## ## ## ##
-                  
-          # use migration dates to define winter
-          indivDate <- locsModel %>%
-            distinct(elkYr, Day1) %>%
-            left_join(reclass, by = "elkYr") %>%
-            filter(Reclass == "migrant") %>%
-            left_join(rlocs, by = c("elkYr" = "burst")) %>%
-            mutate(stdt =  Day1+newrloc) %>%
-            mutate(migDate = stdt+theta) %>%
-            mutate(MigDay = substr(migDate, 6, 10)) %>%
-            dplyr::select(elkYr, stdt, migDate, MigDay) %>%
-            mutate(nDay = migDate-stdt) %>%
-            left_join(indivsHerds) %>%
-            filter(!is.na(migDate))
-          capyrs <- dplyr::select(popnyrs, -nIndiv)
-          capdat <- read.csv("popn-capdates.csv") %>% 
-            semi_join(capyrs, by = c("Herd", "Year")) 
-          herddate <- indivdate %>%
-            group_by(Herd) %>%
-            summarise(firstDate = min(migDate),
-                      avgDate = mean(migDate)) %>%
-            left_join(capdat) %>%
-            dplyr::select(-nIndiv) %>%
-            mutate(nDay = firstDate - as.Date(LastCapDate))
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+      
+      
 
-                                
+
+        # save.image(file = "MTmig-prelim.RData")  
