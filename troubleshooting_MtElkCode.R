@@ -2179,4 +2179,36 @@
           distinct()
          # export
          write.csv(dateDistHerd, "herdDatesDist.csv", row.names = F)       
+ 
          
+         
+#### Investigating migrants with large VI ####
+         
+      viLocsWin <- locsSeasons %>%
+        # subset to only elk that were included in the behavioral analysis
+        filter(inBehavAnalysis == 1) %>%
+        # add herd-averaged movement dates (to determine minimum winter timeframe)
+        left_join(dplyr::select(dateDistHerd, Herd, sprStartMean), by = "Herd") %>%
+        # add correct year to herd-averaged date
+        mutate(
+          yearElk = substr(elkYr, nchar(elkYr)-3, nchar(elkYr)),
+          sprStart = paste(yearElk, sprStartMean, sep = "-"),
+          winEnd = as.Date(as.Date(sprStart)-1)) %>%
+        # calculate length of winter for each individual
+        group_by(elkYr) %>%
+        mutate(
+          day1 = min(Date),
+          winLgth = as.numeric(winEnd-day1)) %>%
+        ungroup() %>%
+        # use same length of time to define winter for each indiv (18 days when i ran it)
+        filter(Date >= day1 & Date <= day1+min(winLgth)) %>%
+        # label as winter
+        mutate(seasonVI = "Winter")          
+     viLocsWin[viLocsWin$elkYr == "22071-2002", "day1"]
+     # ok, the reason this "migrant" has like 50% VI is because
+     # it moved almost immediately after capture
+     # NSD started with a location down on its winter range; VI used lots of locations after it moved
+     
+     # ok and double-checked the others; they also make sense
+
+              
