@@ -73,7 +73,7 @@
     
         ## # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
         ##                   -- IMPORTANT NOTE ABOUT THE BELOW LINE --                        ##
-        ##  To work, you must be running the same versions of Access and R (64bit or 32bit).  ##
+        ##    You must be running both Access and R in the same version (64bit or 32bit).     ##
         ##     If they don't match, change your R version to match your Access version.       ## 
         ## To check Access version: Access > File > Account > About Access > 1st line at top  ##
         ##   To check/change R version: R > Tools > Global Options > General > R Version      ## 
@@ -200,8 +200,6 @@
       elkYrHerdAll <- bind_rows(elkYrHerd, elkYrHerdNoBehav)    
 
 
-
-            
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
     
@@ -511,7 +509,10 @@
           # pull in model parameters for summer range distance and duration
           left_join(dplyr::select(params, elkYr, delta, rho), by = "elkYr") %>%
           rename(dist = delta, smrDr = rho) %>%
-          mutate(dist = as.numeric(round(dist, 2)), smrDr = as.numeric(round(smrDr))) %>%
+          # put distance in km (not km^2); round summer duration to whole number
+          mutate(
+            dist = sqrt(as.numeric(round(dist, 2))), 
+            smrDr = as.numeric(round(smrDr))) %>%
           # add herd and herd-year to facilitate later herd summaries etc
           left_join(elkYrHerd, by = "elkYr") %>%
           mutate(yr = substr(elkYr, nchar(elkYr)-3, nchar(elkYr)))
@@ -592,6 +593,7 @@
             sprEndMean = format(strptime(sprEndMean, format = "%j"), format = "%m-%d"),
             fallStartMean = format(strptime(fallStartMean, format = "%j"), format = "%m-%d"),
             fallEndMean = format(strptime(fallEndMean, format = "%j"), format = "%m-%d"))
+        
         # export
         write.csv(dateDistHerd, "herdDatesDist.csv", row.names = F)       
  
@@ -601,168 +603,120 @@
          
         
     #### Define seasons for all individuals  #### 
-         
 
-           
-      
-       
-      # start with behavior classifications
-      datesIndivs <- reclass %>%
-        # make the behavior label less ambiguous
-        rename(behav = Reclass) %>%
-        # add herd and herd-year
-        left_join(elkYrHerd, by = "elkYr") %>%   
-        # indicate that the elk was included in behavior analysis
-        mutate(inBehavAnalysis = 1) %>%
-        # add elk that weren't included in behavior analysis
-        bind_rows(elkYrHerdNoBehav) %>%
-        left_join(dateDistHerd, by = "Herd") %>%
-        # and indicate that they weren't included
-        mutate(inBehavAnalysis = ifelse(is.na(inBehavAnalysis), 0, 1)) %>%
-        # add individuals' dates if they migrated
-        left_join(datesMigrants, by = c("elkYr", "Herd", "herdYr")) %>%
-        # define spring and fall dates for each individual
-        mutate(
-          # if migrant, use the individual's movement date
-          sprStart = ifelse(!is.na(sprSt), as.character(sprSt), 
-            # otherwise use the herd average date (with correct year)
-            paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprStartMean, sep = "-")),
-          sprEnd = ifelse(!is.na(sprEn), as.character(sprEn), 
-            paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprEndMean, sep = "-")),
-          fallStart = ifelse(!is.na(fallSt), as.character(fallSt), 
-            paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallStartMean, sep = "-")),
-          fallEnd = ifelse(!is.na(fallEn), as.character(fallEn), 
-            paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallEndMean, sep = "-")),
-          # format those dates as dates
-          sprStart = as.Date(sprStart, format = "%Y-%m-%d"),
-          sprEnd = as.Date(sprEnd, format = "%Y-%m-%d"),
-          fallStart = as.Date(fallStart, format = "%Y-%m-%d"),
-          fallEnd = as.Date(fallEnd, format = "%Y-%m-%d"),
-          # and use them to define winter and summer
-          smrStart = sprEnd+1,
-          smrEnd = fallStart-1,
-          win1End = sprStart-1,            
-          win2Start = fallEnd+1,
-          win1Start = win2Start-365) %>%
-        # remove extraneous columns & organize
-        dplyr::select(elkYr, behav, Herd, herdYr, inBehavAnalysis,
-          win1Start, win1End, sprStart, sprEnd, smrStart, smrEnd, fallStart, fallEnd, win2Start, dist)
-      # export
-      write.csv(datesIndivs, "indivDates.csv", row.names = F)
-      
-      
-      # identify season for all recorded collar locations
-      locsSeasons <- locsFormat %>%
-        left_join(datesIndivs, by = c("elkYr", "Herd")) %>%
-        # label each location with season based on date
-        mutate(Season = ifelse(Date >= win1Start & Date <= win1End, "Winter",
-          ifelse(Date >= sprStart & Date <= sprEnd, "Spring",
-            ifelse(Date >= smrStart & Date <= smrEnd, "Summer", "Fall")))) %>%
-        # remove extraneous columns & organize
-        dplyr::select(elkYr, herdYr, Herd, AnimalID, CollarID, inBehavAnalysis, behav,
-          Date, Time, Latitude, Longitude, Season) 
-      #export
-      write.csv(locsSeasons, "locsSeasonsAll.csv", row.names = F)        
-
-
-      # identify season of locations only for elk with at least 20 locs/season
-      locsSeasonsSubset <- locsFormat %>%
-        left_join(datesIndivs, by = c("elkYr", "Herd")) %>%
-        # label each location with season based on date
-        mutate(Season = ifelse(Date >= win1Start & Date <= win1End, "Winter",
-          ifelse(Date >= sprStart & Date <= sprEnd, "Spring",
-            ifelse(Date >= smrStart & Date <= smrEnd, "Summer", "Fall")))) %>%
-        # only keep indivs with at least 20 locations recorded during a season
-        group_by(elkYr, Season) %>%
-        filter(n() >= 20) %>%
-        ungroup() %>%
-        # remove extraneous columns & organize
-        dplyr::select(elkYr, herdYr, Herd, AnimalID, CollarID, inBehavAnalysis, behav,
-          Date, Time, Latitude, Longitude, Season) %>%
-        droplevels() 
-      #export
-      write.csv(locsSeasonsSubset, "locsSeasonsSubset.csv", row.names = F)            
-
-# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
-  
+               
+        # start with behavior classifications
+        datesIndivs <- reclass %>%
+          # make the behavior label less ambiguous
+          rename(behav = Reclass) %>%
+          # add herd and herd-year
+          left_join(elkYrHerd, by = "elkYr") %>%   
+          # indicate that the elk was included in behavior analysis
+          mutate(inBehavAnalysis = 1) %>%
+          # add elk that weren't included in behavior analysis
+          bind_rows(elkYrHerdNoBehav) %>%
+          left_join(dateDistHerd, by = "Herd") %>%
+          # and indicate that they weren't included
+          mutate(inBehavAnalysis = ifelse(is.na(inBehavAnalysis), 0, 1)) %>%
+          # add individuals' dates if they migrated
+          left_join(datesMigrants, by = c("elkYr", "Herd", "herdYr")) %>%
+          # define spring and fall dates for each individual
+          mutate(
+            # if migrant, use the individual's movement date
+            sprStart = ifelse(!is.na(sprSt), as.character(sprSt), 
+              # otherwise use the herd average date (with correct year)
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprStartMean, sep = "-")),
+            sprEnd = ifelse(!is.na(sprEn), as.character(sprEn), 
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), sprEndMean, sep = "-")),
+            fallStart = ifelse(!is.na(fallSt), as.character(fallSt), 
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallStartMean, sep = "-")),
+            fallEnd = ifelse(!is.na(fallEn), as.character(fallEn), 
+              paste(substr(elkYr, nchar(elkYr)-3, nchar(elkYr)), fallEndMean, sep = "-")),
+            # format those dates as dates
+            sprStart = as.Date(sprStart, format = "%Y-%m-%d"),
+            sprEnd = as.Date(sprEnd, format = "%Y-%m-%d"),
+            fallStart = as.Date(fallStart, format = "%Y-%m-%d"),
+            fallEnd = as.Date(fallEnd, format = "%Y-%m-%d"),
+            # and use them to define winter and summer
+            smrStart = sprEnd+1,
+            smrEnd = fallStart-1,
+            win1End = sprStart-1,            
+            win2Start = fallEnd+1,
+            win1Start = win2Start-365) %>%
+          # remove extraneous columns & organize
+          dplyr::select(elkYr, behav, Herd, herdYr, inBehavAnalysis,
+            win1Start, win1End, sprStart, sprEnd, smrStart, smrEnd, fallStart, fallEnd, win2Start, dist)
           
-    
-    
-### ### ### ### ### ### ### #
-####    |OUTPUT FILES|   ####
-### ### ### ### ### ### ### #
-        
-        
-      # increase memory limit in case shapefiles gets huge
-      memory.limit(size = 7500000)
-      
-
-      # export csvs and shps of all seasonal locs per herd, 
-      # only using elk with >=20 locs in a season
-      # (to use all elk regardless of #locs/season, 
-      #  replace "locsSeasonsSubset" with "locsSeasons")
-      
-      
-      
-      # export csvs of seasonal locs per herd    
-      for (i in 1:nrow(herds)) {
-        # for each herd
-        h <- herds$Herd[i]
-        # pull locs for just that herd
-        dat <- filter(locsSeasonsSubset, Herd == h)
-        # identify herd name without any spaces
-        outName <- gsub("\\s", "", h)
-        # name file locs + herd name
-        outPath <- paste0("locs", outName, ".csv")
         # export
-        write.csv(dat, file = outPath, row.names = F)
-      }
+        write.csv(datesIndivs, "indivDates.csv", row.names = F)
+        
       
       
-      # make seasonal locs spatial
-      locsSeasonsSpat <- SpatialPointsDataFrame(
-        data.frame("x"=locsSeasonsSubset$Longitude,"y"=locsSeasonsSubset$Latitude), 
-        locsSeasonsSubset, proj4string = latlong)
+      
+      #### Seasonal locations for all recorded collar data ####
       
       
-      # export master shapefile of all seasonal locs (takes a while) 
-      dir.create("Shapefiles")
-      writeOGR(locsSeasonsSpat,
-               dsn = "./Shapefiles",
-               layer = "SeasonalLocs",
-               driver = "ESRI Shapefile",
-               overwrite_layer = TRUE) 
-      
-      
-      # export shapefiles of seasonal locs per herd (takes even longer)
-      for (i in 1:nrow(herds)) {
-        # for each herd
-        h <- herds$Herd[i]
-        dat <- filter(locsSeasons, Herd == h)
-        # make its locations spatial
-        datSpat <- SpatialPointsDataFrame(
-          data.frame("x"=dat$Longitude,"y"=dat$Latitude), 
-          dat, proj4string = latlong)
-        # identify herd name without any spaces
-        outName <- gsub("\\s", "", h)
-        # export shp with filename locs + herdname
-        writeOGR(datSpat,
-                 dsn = "./Shapefiles",
-                 layer = paste0("locs", outName),
-                 driver = "ESRI Shapefile",
-                 overwrite_layer = TRUE) 
-      }      
+        # identify seasons and classify locations accordingly
+        locsSeasons <- locsFormat %>%
+          left_join(datesIndivs, by = c("elkYr", "Herd")) %>%
+          # label each location with season based on date
+          mutate(Season = ifelse(Date >= win1Start & Date <= win1End, "Winter",
+            ifelse(Date >= sprStart & Date <= sprEnd, "Spring",
+              ifelse(Date >= smrStart & Date <= smrEnd, "Summer", "Fall")))) %>%
+          # remove extraneous columns & organize
+          dplyr::select(elkYr, herdYr, Herd, AnimalID, CollarID, inBehavAnalysis, behav,
+            Date, Time, Latitude, Longitude, Season) 
+        
+        #export
+        write.csv(locsSeasons, "locsSeasonsAll.csv", row.names = F)        
 
       
-      
 
+      #### Seasonal locations only for elk with at least 20 locs/season ####
         
-        
-        
-        
+      
+        # identify seasons and classify locations accordingly
+        locsSeasonsSubset <- locsFormat %>%
+          left_join(datesIndivs, by = c("elkYr", "Herd")) %>%
+          # label each location with season based on date
+          mutate(Season = ifelse(Date >= win1Start & Date <= win1End, "Winter",
+            ifelse(Date >= sprStart & Date <= sprEnd, "Spring",
+              ifelse(Date >= smrStart & Date <= smrEnd, "Summer", "Fall")))) %>%
+          # only keep indivs with at least 20 locations recorded during a season
+          group_by(elkYr, Season) %>%
+          filter(n() >= 20) %>%
+          ungroup() %>%
+          # remove extraneous columns & organize
+          dplyr::select(elkYr, herdYr, Herd, AnimalID, CollarID, inBehavAnalysis, behav,
+            Date, Time, Latitude, Longitude, Season) %>%
+          droplevels() 
+      
+        #export
+        write.csv(locsSeasonsSubset, "locsSeasonsSubset.csv", row.names = F)       
+      
+ 
+           
+      #### Seasonal locations per herd (export csv's)  ####
+      
+        for (i in 1:nrow(herds)) {
+          # for each herd
+          h <- herds$Herd[i]
+          # pull locs for just that herd
+          dat <- filter(locsSeasonsSubset, Herd == h)
+          # identify herd name without any spaces
+          outName <- gsub("\\s", "", h)
+          # name file locs + herd name
+          outPath <- paste0("locs", outName, ".csv")
+          # export
+          write.csv(dat, file = outPath, row.names = F)
+        }
+            
+      
+      
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
   
+
           
     
     
@@ -877,6 +831,65 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
       
       
+          
+    
+    
+### ### ### ### ### ### ### ### ##
+####    |SHAPEFILE OUTPUTS|   ####
+### ### ### ### ### ### ### ### ##
+        
+        
+      # increase memory limit to handle large shapefiles
+      memory.limit(size = 7500000)
+      
 
+      # export csvs and shps of all seasonal locs per herd, 
+      # only using elk with >=20 locs in a season
+      # (to use all elk regardless of #locs/season, 
+      #  replace "locsSeasonsSubset" with "locsSeasons")
+      
+      
+      
+
+      
+      # make seasonal locs spatial
+      locsSeasonsSpat <- SpatialPointsDataFrame(
+        data.frame("x"=locsSeasonsSubset$Longitude,"y"=locsSeasonsSubset$Latitude), 
+        locsSeasonsSubset, proj4string = latlong)
+      
+      
+      #### Shapefile of all seasonal locations #### 
+      dir.create("Shapefiles")
+      writeOGR(locsSeasonsSpat,
+               dsn = "./Shapefiles",
+               layer = "SeasonalLocs",
+               driver = "ESRI Shapefile",
+               overwrite_layer = TRUE) 
+      
+      
+      #### Shapefiles of seasonal locations per herd #### 
+      for (i in 1:nrow(herds)) {
+        # for each herd
+        h <- herds$Herd[i]
+        dat <- filter(locsSeasons, Herd == h)
+        # make its locations spatial
+        datSpat <- SpatialPointsDataFrame(
+          data.frame("x"=dat$Longitude,"y"=dat$Latitude), 
+          dat, proj4string = latlong)
+        # identify herd name without any spaces
+        outName <- gsub("\\s", "", h)
+        # export shp with filename locs + herdname
+        writeOGR(datSpat,
+                 dsn = "./Shapefiles",
+                 layer = paste0("locs", outName),
+                 driver = "ESRI Shapefile",
+                 overwrite_layer = TRUE) 
+      }      
+
+      
+     
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #     
+  
 
         # save.image(file = "MTmig-prelim.RData")  
