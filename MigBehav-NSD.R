@@ -1,6 +1,7 @@
 ### ### ### ### ### ### ### ### ### ### ### ### ### 
 #  CLASSIFYING MIGRATORY BEHAVIOR OF INDIVIDUALS  #
 #         USING NET SQUARED DISPLACEMENT          #
+#  AND VOLUME OF INTERSECTION BT SEASONAL RANGES  #
 #                                                 #
 #         Kristin Barker | Summer 2018            #
 #           kristinjbarker@gmail.com              #
@@ -8,9 +9,16 @@
 
 
 
+
 ### ### ### ### ###
 ####  |SETUP|  ####
 ### ### ### ### ###
+
+
+  #### Identify working directory ####
+
+    # set this to where you want to save your output files
+    setwd("C:\\Users\\kristin\\Documents\\ElkMigrationAnalysis")
 
 
 
