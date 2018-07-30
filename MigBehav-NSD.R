@@ -36,21 +36,28 @@
       "tidyr",        ## data manipulation and general awesomeness
       "dplyr")        ## data manipulation and general awesomeness
 
+    
 
     # have to install migrateR package specially (take it up with spitz)
     if (!"migrateR" %in% installed.packages()[, "Package"]) {
       devtools::install_github("dbspitz/migrateR/migrateR", build_vignettes = T) }
     
-    
-    # load all packages listed above, but first install any you don't already have
-    if (!"devtools" %in% installed.packages()[, "Package"]) {install.packages("devtools")}
-    devtools::install_github("kjbark3r/pkgTest")
-    pkgTest::ipak(packages) 
-    rm(packages)
-    
-    
-  
 
+    # Check whether the packages listed above are installed, 
+    # install any you don't already have, then load them all 
+    # (code by Steven Worthington: https://gist.github.com/stevenworthington/3178163)   
+    ipak <- function(pkg){
+      new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+      if (length(new.pkg)) 
+          install.packages(new.pkg, dependencies = TRUE)
+      sapply(pkg, require, character.only = TRUE)
+    }    
+ 
+    ipak(packages) 
+    rm(packages)
+
+    
+    
   #### Define spatial projections ####
 
     
